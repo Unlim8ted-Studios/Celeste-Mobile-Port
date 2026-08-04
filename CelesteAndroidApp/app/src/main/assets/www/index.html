@@ -1,0 +1,1458 @@
+<!doctype html>
+<!--  Licensed to the .NET Foundation under one or more agreements. -->
+<!-- The .NET Foundation licenses this file to you under the MIT license. -->
+<html>
+
+<head>
+    <title>CelesteWasm</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <link rel="icon" type="image/png" href="assets/app.png" />
+    <link rel="prefetch" id="mountainsrc" href="assets/mountain.png">
+    <link rel="stylesheet" href="styles.css" />
+    <script src="cfg.js"></script>
+    <script src="data.js"></script>
+    <script>
+        (() => {
+            const levels = ["debug", "log", "info", "warn", "error"];
+            const originals = {};
+            const serialize = (value) => {
+                if (value instanceof Error) return value.stack || value.message;
+                if (typeof value === "string") return value;
+                try { return JSON.stringify(value); } catch { return String(value); }
+            };
+            const send = (level, args) => {
+                try {
+                    const message = args.map(serialize).join(" ").slice(0, 1800);
+                    fetch("/__android_port_log?level=" + encodeURIComponent(level) + "&msg=" + encodeURIComponent(message), { cache: "no-store" }).catch(() => {});
+                } catch {}
+            };
+            for (const level of levels) {
+                originals[level] = console[level] ? console[level].bind(console) : console.log.bind(console);
+                console[level] = (...args) => {
+                    send(level, args);
+                    originals[level](...args);
+                };
+            }
+            window.androidPortLog = (level, ...args) => send(level || "log", args);
+        })();
+    </script>
+    <script type="module">
+        const setBootStatus = (text, error = false) => {
+            const status = document.getElementById("static-boot-status");
+            if (!status) return;
+            status.textContent = text;
+            status.classList.toggle("error", error);
+        };
+        window.addEventListener("error", (event) => setBootStatus("Startup error: " + event.message, true));
+        window.addEventListener("unhandledrejection", (event) => {
+            const reason = event.reason && (event.reason.message || String(event.reason));
+            setBootStatus("Startup error: " + (reason || "unknown"), true);
+        });
+        async function startBundleWhenIsolated() {
+            await cleanupLegacyServiceWorkers();
+            if (typeof SharedArrayBuffer === "undefined") {
+                await new Promise((resolve) => setTimeout(resolve, 1200));
+            }
+
+            if (typeof SharedArrayBuffer === "undefined") {
+                throw new Error(
+                    "SharedArrayBuffer unavailable. " +
+                    "url=" + location.href + " " +
+                    "secure=" + window.isSecureContext + " " +
+                    "isolated=" + window.crossOriginIsolated + " " +
+                    "server=" + (window.WEBVIEW_SERVER_URL || "unset")
+                );
+            }
+
+            await cleanupLegacyPackagedOpfs();
+            await import("./bundle.js");
+        }
+
+
+        async function cleanupLegacyServiceWorkers() {
+            if (!navigator.serviceWorker) return;
+            try {
+                const registrations = await navigator.serviceWorker.getRegistrations();
+                await Promise.all(registrations.map((registration) => registration.unregister()));
+                if (window.caches && caches.keys) {
+                    const keys = await caches.keys();
+                    await Promise.all(keys.map((key) => caches.delete(key)));
+                }
+                if (navigator.serviceWorker.controller && !sessionStorage.getItem("androidSwCleanupReloaded")) {
+                    sessionStorage.setItem("androidSwCleanupReloaded", "1");
+                    location.reload();
+                    await new Promise(() => {});
+                }
+            } catch (err) {
+                console.warn("Service worker cleanup skipped:", err);
+            }
+        }
+        async function cleanupLegacyPackagedOpfs() {
+            if (!navigator.storage || !navigator.storage.getDirectory) return;
+            try {
+                const root = await navigator.storage.getDirectory();
+                await removeIfExists(root, "Content", true);
+                await removeIfExists(root, "Celeste.dll", false);
+                await removeIfExists(root, "CustomCeleste.dll", false);
+                await removeIfExists(root, "Celeste.Mod.mm.dll", false);
+                await removeIfExists(root, "MMHOOK_Celeste.dll", false);
+                await removeIfExists(root, "everest.zip", false);
+                const celeste = await getDirectoryIfExists(root, "Celeste");
+                if (celeste) {
+                    await removeIfExists(celeste, "Everest", true);
+                }
+            } catch (err) {
+                console.warn("Packaged OPFS cleanup skipped:", err);
+            }
+        }
+
+        async function getDirectoryIfExists(parent, name) {
+            try {
+                return await parent.getDirectoryHandle(name);
+            } catch {
+                return null;
+            }
+        }
+
+        async function removeIfExists(parent, name, recursive) {
+            try {
+                await parent.removeEntry(name, { recursive });
+            } catch {
+            }
+        }
+
+        startBundleWhenIsolated().catch((err) => {
+            console.error(err);
+            setBootStatus("Startup error: " + (err.message || String(err)), true);
+        });
+    </script>
+</head>
+
+<body><div id="static-boot"><p id="static-boot-status"></p><div class="static-boot-bar"><div></div></div></div>
+
+<style>
+    /* RENDERIZAÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã†â€™O OTIMIZADA */
+    html, body {
+        margin: 0; padding: 0; width: 100%; height: 100%;
+        background-color: #000;
+        overflow: hidden !important;
+        touch-action: none; user-select: none; -webkit-user-select: none;
+        position: fixed; transform: translateZ(0);
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    #static-boot {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background:
+            linear-gradient(rgba(0, 0, 0, 0.56), rgba(0, 0, 0, 0.64)),
+            url("assets/mountain.png") center / cover no-repeat #000;
+        color: #fff;
+        font: 600 18px/1.2 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        text-align: center;
+    }
+
+    #static-boot-status {
+        margin: 0;
+    }
+
+    #static-boot-status.error {
+        max-width: min(86vw, 720px);
+        color: #ff6b6b;
+        font-size: 15px;
+        line-height: 1.35;
+    }
+
+    .static-boot-bar {
+        width: min(72vw, 460px);
+        height: 12px;
+        overflow: hidden;
+        border: 2px solid rgba(255, 255, 255, 0.82);
+        background: rgba(255, 255, 255, 0.12);
+    }
+
+    .static-boot-bar > div {
+        width: 42%;
+        height: 100%;
+        background: #fff;
+        animation: staticBootProgress 1.15s ease-in-out infinite alternate;
+    }
+
+    @keyframes staticBootProgress {
+        from { transform: translateX(-95%); }
+        to { transform: translateX(235%); }
+    }
+    
+    canvas {
+        display: block; margin: 0 auto;
+        width: 100% !important; height: 100% !important;
+        object-fit: contain; z-index: 1;
+        image-rendering: pixelated; 
+        will-change: transform; transform: translateZ(0);
+    }
+
+    /* Oculta UI do Site */
+    .fps, .logs, .header, .title, .version, .icon, header, footer, .log-container {
+        display: none !important; opacity: 0 !important; pointer-events: none !important;
+        width: 0 !important; height: 0 !important; position: absolute !important;
+    }
+    body.playing .top-bar, body.playing footer, body.playing .header-controls, 
+    body.playing #header, body.playing .logs, body.playing h1, body.playing p { display: none !important; }
+    body.playing canvas { position: fixed !important; top: 0; left: 0; right: 0; bottom: 0; z-index: 5; background: #000; }
+    
+    /* CONTROLES MOBILE */
+    #gamepad-overlay { 
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+        z-index: 9999; pointer-events: none; user-select: none;
+        touch-action: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+        contain: strict;
+    }
+    body:not(.playing):not(.editing-layout) #gamepad-overlay {
+        display: none !important;
+    }
+    body.editing-layout #gamepad-overlay { pointer-events: auto !important; }
+
+    .gp-btn, .menu-btn {
+        background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.26), rgba(255,255,255,0.11)); 
+        border: 2px solid rgba(255, 255, 255, 0.34);
+        color: rgba(255, 255, 255, 0.9); 
+        display: flex; align-items: center; justify-content: center;
+        font-family: monospace; font-weight: bold; border-radius: 50%; 
+        position: absolute; pointer-events: auto;
+        box-shadow: 0 8px 18px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.22);
+        text-shadow: 0 1px 3px rgba(0,0,0,0.45);
+        
+        /* GPU Transform Only */
+        will-change: transform; 
+        transform: translateZ(0); 
+        transition: none !important;
+        touch-action: none;
+        transform-origin: center center;
+    }
+    
+    /* Ignora cliques no texto interno */
+    .gp-btn *, .menu-btn * { pointer-events: none; }
+    
+    /* ANIMAÃƒÆ’Ã¢â‚¬Â¡ÃƒÆ’Ã†â€™O LEVE */
+    .gp-btn.active, .menu-btn.active { 
+        background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.45), rgba(118,190,255,0.32));
+        border-color: rgba(255,255,255,0.74);
+        transform: translateZ(0) scale(0.93) !important;
+    }
+    
+    #joystick-base {
+        width: 140px; height: 140px; border-radius: 50%; 
+        background: radial-gradient(circle at center, rgba(255,255,255,0.08), rgba(0,0,0,0.24)); border: 2px solid rgba(255, 255, 255, 0.36); 
+        position: absolute; 
+        bottom: 30px; left: 30px; 
+        display: none; pointer-events: auto;
+        will-change: transform; transform: translateZ(0);
+        transform-origin: center center;
+        touch-action: none;
+        box-shadow: 0 10px 24px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.16);
+    }
+    #joystick-thumb {
+        width: 50px; height: 50px; border-radius: 50%; 
+        background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.86), rgba(170,215,255,0.58));
+        position: absolute; top: 50%; left: 50%; 
+        transform: translate(-50%, -50%);
+        will-change: transform; transform: translateZ(0);
+        pointer-events: none;
+        box-shadow: 0 6px 16px rgba(0,0,0,0.28);
+    }
+    
+    /* UI ELEMENTS */
+    #gear-btn-fixed { 
+        position: absolute; top: 20px; left: 20px; width: 46px; height: 46px; 
+        background: linear-gradient(145deg, rgba(28,34,44,0.86), rgba(8,10,14,0.72)); z-index: 10000; pointer-events: auto;
+        border: 1px solid rgba(255,255,255,0.34); border-radius: 12px;
+        display: flex; justify-content: center; align-items: center; 
+        cursor: pointer; box-shadow: 0 10px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.18);
+        backdrop-filter: blur(8px);
+    }
+    #gear-btn-fixed svg {
+        width: 28px; height: 28px; display: block; pointer-events: none;
+        filter: drop-shadow(0 1px 3px rgba(0,0,0,0.45));
+    }
+    #gear-btn-fixed:active {
+        transform: translateY(1px) scale(0.98);
+        background: linear-gradient(145deg, rgba(16,22,32,0.9), rgba(5,7,10,0.78));
+    }
+    #zone-menu { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); pointer-events: auto; }
+    #gp-pause { top: 20px; right: 20px; width: 50px; height: 50px; background: rgba(0,0,0,0.3); border-radius: 50%; }
+    .icon-pause { width: 12px; height: 16px; border-left: 4px solid #fff; border-right: 4px solid #fff; display: block; }
+    
+    /* MODAL SETTINGS */
+    #settings-modal-injected {
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+        background: #111; border: 2px solid #fff; padding: 20px; 
+        z-index: 2147483647; color: white; display: flex; flex-direction: column; gap: 15px; width: 280px;
+        max-height: calc(100vh - 40px); overflow-y: auto; overscroll-behavior: contain;
+        box-shadow: 0 0 50px rgba(0,0,0,0.8);
+    }
+    #settings-modal-injected select {
+        width: 100%; box-sizing: border-box; background: #222; border: 1px solid #555;
+        color: white; padding: 8px; border-radius: 4px;
+    }
+    .st-btn { padding: 10px; border: 1px solid #555; background: #333; color: white; width: 100%; border-radius: 4px; transition: background 0.2s;}
+    .btn-close { background: #d63031; border: none; margin-top: 5px; }
+
+    #celeste-mod-browser {
+        display: none; position: fixed; inset: 14px; z-index: 2147483647;
+        background: #101216; color: #fff; border: 1px solid rgba(255,255,255,0.35);
+        box-shadow: 0 18px 60px rgba(0,0,0,0.72); pointer-events: auto;
+        flex-direction: column; overflow: hidden; font-family: Inter, system-ui, sans-serif;
+    }
+    #celeste-mod-browser.open { display: flex; }
+    .mod-browser-head {
+        display: flex; align-items: center; gap: 8px; padding: 10px;
+        border-bottom: 1px solid rgba(255,255,255,0.16); background: #181c22;
+    }
+    .mod-browser-head input {
+        flex: 1; min-width: 0; background: #0b0d10; border: 1px solid #444c58;
+        color: #fff; padding: 10px; border-radius: 4px; font-size: 15px;
+    }
+    .mod-browser-head button, .mod-card button, .installed-mod button {
+        background: #2d5f8f; color: #fff; border: 0; border-radius: 4px;
+        padding: 10px 12px; font-weight: 700;
+    }
+    .mod-browser-head .danger, .installed-mod .danger { background: #743232; }
+    .mod-browser-body {
+        display: grid; grid-template-columns: minmax(0, 1fr) 280px; min-height: 0; flex: 1;
+    }
+    .mod-results, .installed-list {
+        min-height: 0; overflow-y: auto; padding: 10px; overscroll-behavior: contain;
+    }
+    .installed-list { border-left: 1px solid rgba(255,255,255,0.14); background: #0b0d10; }
+    .mod-status {
+        padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.12);
+        color: #c9d4e5; font-size: 13px; background: #11151b;
+    }
+    .mod-card, .installed-mod {
+        border: 1px solid rgba(255,255,255,0.14); background: #171a20;
+        border-radius: 6px; padding: 10px; margin-bottom: 10px;
+    }
+    .mod-card h3, .installed-mod strong { margin: 0 0 6px; font-size: 16px; line-height: 1.2; }
+    .mod-card p { margin: 0 0 10px; color: #c9d4e5; line-height: 1.35; font-size: 13px; }
+    .mod-actions, .installed-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .installed-title { font-weight: 800; margin: 0 0 10px; }
+    @media (max-width: 720px) {
+        #celeste-mod-browser { inset: 0; }
+        .mod-browser-body { grid-template-columns: 1fr; }
+        .installed-list { border-left: 0; border-top: 1px solid rgba(255,255,255,0.14); max-height: 36vh; }
+        .mod-browser-head { flex-wrap: wrap; }
+    }
+    
+    /* EDIT MODE UI */
+    #save-layout-btn { display: none; position: fixed; top: 20px; right: 20px; z-index: 2147483647; padding: 10px 20px; background: #00b894; color: white; border: none; border-radius: 4px; font-weight:bold; cursor: pointer; pointer-events: auto; }
+    
+    #edit-controls-bar {
+        display: none; position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+        background: rgba(20, 20, 20, 0.95); padding: 0; border-radius: 8px; border: 1px solid #fff;
+        z-index: 2147483647; color: white; flex-direction: column; align-items: center; 
+        width: 250px; pointer-events: auto;
+    }
+    #edit-drag-handle {
+        width: 100%; background: #444; color: #fff; font-size: 12px; text-align: center; padding: 5px 0;
+        cursor: move; border-top-left-radius: 8px; border-top-right-radius: 8px; font-weight: bold;
+    }
+    #edit-content { padding: 15px; display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; box-sizing: border-box; }
+    
+    body.editing-layout .gp-btn, body.editing-layout #joystick-base, body.editing-layout .menu-btn { 
+        border: 2px dashed #f1c40f !important; 
+        background: rgba(241, 196, 15, 0.3) !important; 
+        cursor: move;
+    }
+    body.editing-layout .selected-element {
+        border: 2px solid #00ff00 !important;
+        background: rgba(0, 255, 0, 0.4) !important;
+        box-shadow: 0 0 15px #00ff00;
+    }
+
+    /* Layout PadrÃƒÆ’Ã‚Â£o */
+    #gp-up { bottom: 140px; left: 90px; width: 60px; height: 60px; }
+    #gp-down { bottom: 30px; left: 90px; width: 60px; height: 60px; }
+    #gp-left { bottom: 85px; left: 35px; width: 60px; height: 60px; }
+    #gp-right { bottom: 85px; left: 145px; width: 60px; height: 60px; }
+    #gp-y { bottom: 140px; right: 90px; width: 65px; height: 65px; background: rgba(255, 200, 0, 0.2); }
+    #gp-x { bottom: 85px; right: 145px; width: 65px; height: 65px; background: rgba(0, 150, 255, 0.2); }
+    #gp-a { bottom: 30px; right: 90px; width: 65px; height: 65px; background: rgba(50, 205, 50, 0.2); }
+    #gp-b { bottom: 85px; right: 35px; width: 65px; height: 65px; background: rgba(255, 69, 0, 0.2); }
+</style>
+
+<script>
+    (function() {
+        // 1. NATIVE DOWNLOAD BRIDGE
+        function injectDownloadBridge() {
+            document.addEventListener('click', function(e) {
+                const anchor = e.target.closest('a[download]');
+                if (anchor) {
+                    e.preventDefault();
+                    const url = anchor.href;
+                    const filename = anchor.download || 'celeste_save.zip';
+                    if (url.startsWith('blob:')) handleBlobDownload(url, filename);
+                }
+            }, true);
+        }
+        function handleBlobDownload(blobUrl, filename) {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', blobUrl, true);
+            xhr.responseType = 'blob';
+            xhr.onload = function() {
+                if (this.status === 200) { saveToAndroidDownloads(this.response, filename); }
+            };
+            xhr.send();
+        }
+        function saveToAndroidDownloads(blob, filename) {
+            if (!window.resolveLocalFileSystemURL) return alert("File Plugin missing!");
+            window.resolveLocalFileSystemURL(cordova.file.externalRootDirectory, function(rootDir) {
+                rootDir.getDirectory('Download', {create: true}, function(dlDir) {
+                    dlDir.getFile(filename, {create: true, exclusive: false}, function(fileEntry) {
+                        fileEntry.createWriter(function(fileWriter) {
+                            fileWriter.onwriteend = function() { alert("ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ Saved to Downloads/" + filename); };
+                            fileWriter.onerror = function(e) { alert("Save Failed: " + e.toString()); };
+                            fileWriter.write(blob);
+                        });
+                    }, (e) => alert("Error creating file: " + e.code));
+                }, (e) => alert("Error accessing Download folder: " + e.code));
+            }, (e) => alert("Error accessing Root FS: " + e.code));
+        }
+        document.addEventListener("deviceready", injectDownloadBridge, false);
+
+        // 2. KERNEL OPTIMIZATIONS
+        try { Object.defineProperty(window, 'devicePixelRatio', { get: function() { return 1; } }); } catch(e) {}
+        
+        try {
+            const originalGetContext = HTMLCanvasElement.prototype.getContext;
+            HTMLCanvasElement.prototype.getContext = function(type, attributes) {
+                if (type.includes('webgl')) {
+                    attributes = attributes || {};
+                    attributes.alpha = false;                 
+                    attributes.desynchronized = true;         
+                    attributes.powerPreference = "high-performance";
+                    attributes.preserveDrawingBuffer = false; 
+                    attributes.antialias = false;
+                }
+                return originalGetContext.call(this, type, attributes);
+            };
+        } catch(e) {}
+
+        try {
+            const originalAudioContext = window.AudioContext || window.webkitAudioContext;
+            if (originalAudioContext) {
+                window.AudioContext = window.webkitAudioContext = function(options) {
+                    options = options || {};
+                    return new originalAudioContext({ latencyHint: 'balanced', sampleRate: 44100 });
+                };
+            }
+        } catch(e) {}
+
+        function activateGameMode() {
+            document.body.classList.add('playing');
+            window.scrollTo(0, 0);
+            if(document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(()=>{});
+        }
+        document.addEventListener('click', (e) => {
+            const btn = e.target.closest('button') || e.target.closest('.action');
+            if (btn) {
+                const text = btn.innerText.toLowerCase().trim();
+                const html = btn.innerHTML.toLowerCase();
+                if (text.includes("start game") || (html.includes("play_arrow") && !text.includes("download"))) {
+                    setTimeout(activateGameMode, 200);
+                }
+            }
+        }, true);
+
+        window.celesteAndroidHaptic = function(strength, length) {
+            if(localStorage.getItem("celeste_haptic_feedback") === "false") return;
+            const strong = String(strength || "").toLowerCase().includes("strong");
+            const longPulse = String(length || "").toLowerCase().includes("long");
+            const ms = longPulse ? (strong ? 90 : 60) : (strong ? 45 : 25);
+            if(navigator.vibrate) navigator.vibrate(ms);
+        };
+
+        window.celesteAndroidOpenUrl = function(url) {
+            if(!url) return;
+            window.open(String(url), "_blank", "noopener");
+        };
+
+        window.celesteAndroidSetOption = function(key, value) {
+            const enabled = value === true || String(value).toLowerCase() === "true";
+            switch(String(key)) {
+                case "touch_controls":
+                    localStorage.setItem("celeste_hide", (!enabled).toString());
+                    break;
+                case "joystick_mode":
+                    localStorage.setItem("celeste_joy", enabled.toString());
+                    break;
+                case "joystick_snap_8way":
+                    localStorage.setItem("celeste_joy_snap", enabled.toString());
+                    break;
+                case "haptic_feedback":
+                    localStorage.setItem("celeste_haptic_feedback", enabled.toString());
+                    break;
+            }
+            if(window.CelesteAndroidControlsRefresh) window.CelesteAndroidControlsRefresh();
+        };
+
+        const celesteTouchState = { downX: 0, downY: 0, x: -1, y: -1, tap: false, scroll: 0, tracking: false };
+        function isTemporaryAndroidUi(target) {
+            return !!(target && target.closest && target.closest("#settings-modal-injected, #celeste-mod-browser, #edit-controls-bar, #save-layout-btn, #gamepad-overlay"));
+        }
+        document.addEventListener("pointerdown", (event) => {
+            if(isTemporaryAndroidUi(event.target)) return;
+            celesteTouchState.tracking = true;
+            celesteTouchState.downX = celesteTouchState.x = event.clientX;
+            celesteTouchState.downY = celesteTouchState.y = event.clientY;
+        }, true);
+        document.addEventListener("pointermove", (event) => {
+            if(!celesteTouchState.tracking || isTemporaryAndroidUi(event.target)) return;
+            celesteTouchState.x = event.clientX;
+            celesteTouchState.y = event.clientY;
+            celesteTouchState.scroll += event.movementY || 0;
+        }, true);
+        document.addEventListener("pointerup", (event) => {
+            if(!celesteTouchState.tracking || isTemporaryAndroidUi(event.target)) return;
+            celesteTouchState.tracking = false;
+            celesteTouchState.x = event.clientX;
+            celesteTouchState.y = event.clientY;
+            if(Math.hypot(event.clientX - celesteTouchState.downX, event.clientY - celesteTouchState.downY) < 18) {
+                celesteTouchState.tap = true;
+            }
+        }, true);
+        document.addEventListener("wheel", (event) => {
+            if(isTemporaryAndroidUi(event.target)) return;
+            celesteTouchState.scroll += event.deltaY;
+        }, { passive: true, capture: true });
+        window.celesteAndroidConsumeTouchTap = function() {
+            const tapped = celesteTouchState.tap;
+            celesteTouchState.tap = false;
+            return tapped;
+        };
+        function celesteCanvasPoint() {
+            const canvas = document.querySelector("canvas");
+            const rect = canvas ? canvas.getBoundingClientRect() : { left: 0, top: 0, width: innerWidth, height: innerHeight };
+            const width = rect.width || innerWidth || 1;
+            const height = rect.height || innerHeight || 1;
+            return {
+                x: (celesteTouchState.x - rect.left) * 1920 / width,
+                y: (celesteTouchState.y - rect.top) * 1080 / height
+            };
+        }
+        window.celesteAndroidTouchX = function() { return celesteCanvasPoint().x; };
+        window.celesteAndroidTouchY = function() { return celesteCanvasPoint().y; };
+        window.celesteAndroidConsumeTouchScroll = function() {
+            const scroll = celesteTouchState.scroll;
+            celesteTouchState.scroll = 0;
+            return scroll;
+        };
+
+        function cleanText(value, limit) {
+            const div = document.createElement("div");
+            div.innerHTML = String(value || "");
+            return (div.textContent || div.innerText || "").replace(/\s+/g, " ").trim().slice(0, limit || 220);
+        }
+
+        function escapeHtml(value) {
+            return String(value || "").replace(/[&<>"']/g, (char) => ({
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                '"': "&quot;",
+                "'": "&#39;"
+            })[char]);
+        }
+
+        function modZipName(name) {
+            return String(name || "mod").replace(/[^a-z0-9._ -]+/gi, "_").replace(/\s+/g, " ").trim().slice(0, 80).replace(/\.zip(\.disabled)?$/i, "") + ".zip";
+        }
+
+        function findZipDownloadUrl(value) {
+            if(!value) return "";
+            if(typeof value === "string") return value.includes(".zip") || value.includes("/dl/") ? value : "";
+            if(Array.isArray(value)) {
+                for(const item of value) {
+                    const found = findZipDownloadUrl(item);
+                    if(found) return found;
+                }
+                return "";
+            }
+            if(typeof value === "object") {
+                for(const key of ["_sDownloadUrl", "_sDownloadURL", "_sFile", "_sUrl", "downloadUrl", "url"]) {
+                    const found = findZipDownloadUrl(value[key]);
+                    if(found) return found;
+                }
+                for(const item of Object.values(value)) {
+                    const found = findZipDownloadUrl(item);
+                    if(found) return found;
+                }
+            }
+            return "";
+        }
+
+        const ModBrowser = {
+            page: 1,
+            query: "",
+            installed: [],
+            api: "https://api.gamebanana.com/Core",
+            open() {
+                const root = document.getElementById("celeste-mod-browser");
+                if(!root) return;
+                root.classList.add("open");
+                this.refreshInstalled();
+                this.load();
+            },
+            close() {
+                const root = document.getElementById("celeste-mod-browser");
+                if(root) root.classList.remove("open");
+            },
+            status(text) {
+                const el = document.getElementById("mod-browser-status");
+                if(el) el.textContent = text || "";
+            },
+            async json(url) {
+                const response = await fetch(url, { cache: "no-store" });
+                if(!response.ok) throw new Error("HTTP " + response.status);
+                return await response.json();
+            },
+            async load() {
+                const results = document.getElementById("mod-browser-results");
+                if(!results) return;
+                results.innerHTML = "";
+                this.status("Loading GameBanana mods...");
+                try {
+                    const ids = await this.json(`${this.api}/List/New?itemtype=Mod&gameid=6460&include_updated=1&page=${this.page}&format=json_min`);
+                    const list = Array.isArray(ids) ? ids.slice(0, 20) : [];
+                    if(!list.length) {
+                        this.status("No mods returned.");
+                        return;
+                    }
+                    const fields = "_idRow,_sName,_sText,_sProfileUrl,_tsDateUpdated,_aFiles";
+                    const details = await Promise.all(list.map((id) => this.json(`${this.api}/Item/Data?itemtype=Mod&itemid=${encodeURIComponent(id)}&fields=${encodeURIComponent(fields)}&return_keys=1&format=json_min`).catch(() => null)));
+                    const mods = details.filter(Boolean).filter((mod) => {
+                        if(!this.query) return true;
+                        return String(mod._sName || "").toLowerCase().includes(this.query.toLowerCase());
+                    });
+                    results.innerHTML = mods.map((mod) => this.cardHtml(mod)).join("") || '<div class="mod-card">No matching mods on this page.</div>';
+                    results.querySelectorAll("[data-install-url]").forEach((button) => {
+                        button.onclick = () => this.install(button.dataset.installUrl, button.dataset.installName, button);
+                    });
+                    results.querySelectorAll("[data-profile-url]").forEach((button) => {
+                        button.onclick = () => {
+                            if(button.dataset.profileUrl) window.open(button.dataset.profileUrl, "_blank", "noopener");
+                        };
+                    });
+                    this.status(`Showing page ${this.page}. Installs require an app restart before Everest loads new changes.`);
+                } catch(err) {
+                    console.error(err);
+                    this.status("Could not load GameBanana mods. Check connection and try again.");
+                }
+            },
+            cardHtml(mod) {
+                const name = cleanText(mod._sName, 90) || "Untitled Mod";
+                const body = cleanText(mod._sText, 220);
+                const url = findZipDownloadUrl(mod._aFiles);
+                const installed = this.installed.some((item) => item.name.toLowerCase() === modZipName(name).toLowerCase());
+                const safeName = escapeHtml(name);
+                const safeBody = escapeHtml(body || "No description available.");
+                const safeUrl = escapeHtml(url);
+                const safeProfile = escapeHtml(String(mod._sProfileUrl || ""));
+                return `<section class="mod-card">
+                    <h3>${safeName}</h3>
+                    <p>${safeBody}</p>
+                    <div class="mod-actions">
+                        <button data-install-url="${safeUrl}" data-install-name="${safeName}" ${url ? "" : "disabled"}>${installed ? "Update" : "Install"}</button>
+                        <button data-profile-url="${safeProfile}">Details</button>
+                    </div>
+                </section>`;
+            },
+            async install(url, name, button) {
+                if(!url) return alert("This mod has no downloadable ZIP in the API response.");
+                if(!window.celesteInstallModZip) return alert("Game filesystem is still loading.");
+                const oldText = button.textContent;
+                button.disabled = true;
+                button.textContent = "Installing...";
+                this.status("Downloading and installing " + name + "...");
+                try {
+                    const result = await window.celesteInstallModZip(url, modZipName(name));
+                    button.textContent = "Installed";
+                    this.status(`${result.name} installed. Restart the app for Everest to reload mods.`);
+                    await this.refreshInstalled();
+                } catch(err) {
+                    console.error(err);
+                    button.disabled = false;
+                    button.textContent = oldText;
+                    this.status("Install failed: " + (err && err.message ? err.message : err));
+                }
+            },
+            async refreshInstalled() {
+                const list = document.getElementById("installed-mod-list");
+                if(!list) return;
+                if(!window.celesteListInstalledMods) {
+                    list.innerHTML = '<div class="installed-mod">Game filesystem is still loading.</div>';
+                    return;
+                }
+                try {
+                    this.installed = await window.celesteListInstalledMods();
+                    list.innerHTML = this.installed.map((mod) => `<div class="installed-mod">
+                        <strong>${escapeHtml(mod.name)}</strong>
+                        <div class="installed-actions">
+                            <button data-toggle-mod="${escapeHtml(mod.name)}">${mod.enabled ? "Disable" : "Enable"}</button>
+                            <button class="danger" data-delete-mod="${escapeHtml(mod.name)}">Delete</button>
+                        </div>
+                    </div>`).join("") || '<div class="installed-mod">No installed mods.</div>';
+                    list.querySelectorAll("[data-toggle-mod]").forEach((button) => {
+                        button.onclick = async () => {
+                            const name = button.dataset.toggleMod;
+                            const mod = this.installed.find((item) => item.name === name);
+                            if(!mod) return;
+                            await window.celesteSetModEnabled(name, !mod.enabled);
+                            this.status("Mod state changed. Restart the app for Everest to reload mods.");
+                            await this.refreshInstalled();
+                        };
+                    });
+                    list.querySelectorAll("[data-delete-mod]").forEach((button) => {
+                        button.onclick = async () => {
+                            if(!confirm("Delete this mod?")) return;
+                            await window.celesteDeleteMod(button.dataset.deleteMod);
+                            this.status("Mod deleted. Restart the app for Everest to reload mods.");
+                            await this.refreshInstalled();
+                        };
+                    });
+                } catch(err) {
+                    console.error(err);
+                    list.innerHTML = '<div class="installed-mod">Could not read installed mods.</div>';
+                }
+            }
+        };
+
+        window.celesteAndroidOpenModBrowser = function() {
+            ModBrowser.open();
+        };
+
+        window.celesteAndroidOpenSaveData = async function() {
+            try {
+                if(window.celesteDownloadSave) {
+                    await window.celesteDownloadSave();
+                    return;
+                }
+                const app = window.celesteApp || window.app;
+                if(app && app.savesmenu) app.savesmenu.showModal();
+                else alert("Save data is still loading.");
+            } catch(err) {
+                console.error(err);
+                alert("Save export failed. Try again after the game finishes loading.");
+            }
+        };
+
+        window.celesteAndroidOpenFileManager = function() {
+            const app = window.celesteApp || window.app;
+            if(app && app.fs) app.fs.showModal();
+            else alert("File manager is still loading.");
+        };
+
+        window.celesteAndroidResetGame = resetGameStorage;
+
+        function installModBrowserControls() {
+            const search = document.getElementById("mod-browser-search");
+            const prev = document.getElementById("mod-browser-prev");
+            const next = document.getElementById("mod-browser-next");
+            const refresh = document.getElementById("mod-browser-refresh");
+            const close = document.getElementById("mod-browser-close");
+            if(!search || search.dataset.ready) return;
+            search.dataset.ready = "true";
+            search.oninput = () => {
+                ModBrowser.query = search.value || "";
+                clearTimeout(search._timer);
+                search._timer = setTimeout(() => ModBrowser.load(), 250);
+            };
+            prev.onclick = () => {
+                if(ModBrowser.page > 1) {
+                    ModBrowser.page--;
+                    ModBrowser.load();
+                }
+            };
+            next.onclick = () => {
+                ModBrowser.page++;
+                ModBrowser.load();
+            };
+            refresh.onclick = async () => {
+                await ModBrowser.refreshInstalled();
+                await ModBrowser.load();
+            };
+            close.onclick = () => ModBrowser.close();
+        }
+        document.addEventListener("DOMContentLoaded", installModBrowserControls);
+        setTimeout(installModBrowserControls, 0);
+
+        async function resetGameStorage() {
+            if(!confirm("Reset game data and reload? Export saves first if you need them.")) return;
+            localStorage.clear();
+            if(indexedDB && indexedDB.databases) {
+                try {
+                    const dbs = await indexedDB.databases();
+                    await Promise.all(dbs.map((db) => db && db.name ? new Promise((resolve) => {
+                        const req = indexedDB.deleteDatabase(db.name);
+                        req.onsuccess = req.onerror = req.onblocked = resolve;
+                    }) : Promise.resolve()));
+                } catch(err) {
+                    console.warn("IndexedDB reset failed", err);
+                }
+            }
+            location.reload();
+        }
+
+        function installInitActions() {
+            const inner = document.querySelector(".info .inner");
+            if(!inner || document.getElementById("init-port-actions")) return;
+            const actions = document.createElement("div");
+            actions.id = "init-port-actions";
+            actions.style.cssText = "display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:14px;";
+            actions.innerHTML = '<button class="action" id="init-export-save" type="button"><span class="label">Export Save</span></button><button class="action" id="init-reset-game" type="button"><span class="label">Reset Game</span></button>';
+            inner.appendChild(actions);
+            document.getElementById("init-export-save").onclick = async () => {
+                try {
+                    if(!window.celesteDownloadSave) throw new Error("Save exporter is not ready yet.");
+                    await window.celesteDownloadSave();
+                } catch(err) {
+                    console.error(err);
+                    alert("Save export is not ready. Let initialization finish, then try again.");
+                }
+            };
+            document.getElementById("init-reset-game").onclick = resetGameStorage;
+        }
+        new MutationObserver(installInitActions).observe(document.documentElement, { childList:true, subtree:true });
+        document.addEventListener("DOMContentLoaded", installInitActions);
+    })();
+</script>
+
+<div id="gamepad-overlay">
+    <div id="gear-btn-fixed" aria-label="Open settings" role="button">
+        <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+            <defs>
+                <linearGradient id="settingsGlyphGradient" x1="10" y1="8" x2="38" y2="40" gradientUnits="userSpaceOnUse">
+                    <stop offset="0" stop-color="#ffffff"/>
+                    <stop offset="0.55" stop-color="#b9d7ff"/>
+                    <stop offset="1" stop-color="#7fb0ff"/>
+                </linearGradient>
+            </defs>
+            <path d="M27.8 6.5 29.5 12c1.1.4 2.2 1 3.1 1.8l5.7-1.4 3.8 6.6-4.1 4.1c.1.6.2 1.2.2 1.9s-.1 1.3-.2 1.9l4.1 4.1-3.8 6.6-5.7-1.4c-.9.8-2 1.4-3.1 1.8l-1.7 5.5h-7.6L18.5 38c-1.1-.4-2.2-1-3.1-1.8l-5.7 1.4L5.9 31l4.1-4.1c-.1-.6-.2-1.2-.2-1.9s.1-1.3.2-1.9L5.9 19l3.8-6.6 5.7 1.4c.9-.8 2-1.4 3.1-1.8l1.7-5.5h7.6Z" fill="rgba(127,176,255,0.16)" stroke="url(#settingsGlyphGradient)" stroke-width="2.7" stroke-linejoin="round"/>
+            <circle cx="24" cy="25" r="6.5" fill="none" stroke="#fff" stroke-width="3"/>
+        </svg>
+    </div>
+    <div id="controls-layer"></div>
+</div>
+
+<button id="save-layout-btn">ÃƒÂ°Ã…Â¸Ã¢â‚¬â„¢Ã‚Â¾ SAVE</button>
+<div id="celeste-mod-browser" aria-label="Mod Browser">
+    <div class="mod-browser-head">
+        <input id="mod-browser-search" type="search" placeholder="Search current page">
+        <button id="mod-browser-prev" type="button">Prev</button>
+        <button id="mod-browser-next" type="button">Next</button>
+        <button id="mod-browser-refresh" type="button">Refresh</button>
+        <button class="danger" id="mod-browser-close" type="button">Close</button>
+    </div>
+    <div class="mod-status" id="mod-browser-status">Ready.</div>
+    <div class="mod-browser-body">
+        <main class="mod-results" id="mod-browser-results"></main>
+        <aside class="installed-list">
+            <div class="installed-title">Installed Mods</div>
+            <div id="installed-mod-list"></div>
+        </aside>
+    </div>
+</div>
+
+<div id="edit-controls-bar">
+    <div id="edit-drag-handle">ÃƒÂ¢Ã‹Å“Ã‚Â° DRAG HERE</div>
+    <div id="edit-content">
+        <span>Scale (<span id="size-val">100%</span>)</span>
+        <input type="range" id="size-slider" min="50" max="250" step="5" value="100" style="width:100%">
+        <small style="color:#aaa; text-align:center;">Tap a button to select</small>
+        <button id="cancel-layout-btn" style="width:100%; padding:9px; border:1px solid #666; border-radius:4px; background:#333; color:#fff; font-weight:bold;">Cancel</button>
+    </div>
+</div>
+
+<script>
+    (function(){
+        const PRESET_KEY = 'celeste_layout_presets_v54';
+        const CURRENT_PRESET_KEY = 'celeste_layout_current_preset_v54';
+        const DEFAULT_PRESET_ID = 'default';
+        let scaleData = {}; 
+        let layoutData = {};
+        let layoutPresets = loadPresets();
+        let currentPreset = localStorage.getItem(CURRENT_PRESET_KEY) || DEFAULT_PRESET_ID;
+        applyPresetData(currentPreset);
+
+        let isDirty = false;
+
+        const InputSystem = {
+            activePointers: new Map(), buttons: [], joystick: null,
+            pressThreshold: 0.34,
+            releaseThreshold: 0.22,
+            init() {
+                const overlay = document.getElementById('gamepad-overlay');
+                overlay.addEventListener('pointerdown', this.handlePointerDown.bind(this), {passive:false});
+                overlay.addEventListener('pointermove', this.handlePointerMove.bind(this), {passive:false});
+                overlay.addEventListener('pointerup', this.handlePointerUp.bind(this), {passive:false});
+                overlay.addEventListener('pointercancel', this.handlePointerUp.bind(this), {passive:false});
+                window.addEventListener('blur', () => this.releaseAll());
+                this.visualLoop();
+                window.addEventListener('resize', () => { setTimeout(() => this.resetCache(), 500); });
+            },
+            
+            // --- VOID SHIELD HANDLERS (V53) ---
+            handlePointerDown(e) {
+                if(isEditing) return; 
+                e.preventDefault();
+                e.stopPropagation();
+
+                // VOID SHIELD: Se tocar no fundo (overlay) e nÃƒÆ’Ã‚Â£o em um botÃƒÆ’Ã‚Â£o, ABORTA
+                // Isso impede alocaÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o de memÃƒÆ’Ã‚Â³ria e cÃƒÆ’Ã‚Â¡lculo para toques inÃƒÆ’Ã‚Âºteis
+                if(e.target.id === 'gamepad-overlay' || e.target.id === 'controls-layer') return;
+
+                try { document.getElementById('gamepad-overlay').setPointerCapture(e.pointerId); } catch(err){}
+                this.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY, lastX: e.clientX, lastY: e.clientY });
+                this.processLogic();
+            },
+            
+            handlePointerMove(e) {
+                if(isEditing) return; e.preventDefault();
+                // OtimizaÃƒÆ’Ã‚Â§ÃƒÆ’Ã‚Â£o: Se o pointer nÃƒÆ’Ã‚Â£o existe (foi filtrado pelo Void Shield), nÃƒÆ’Ã‚Â£o faz nada
+                if(this.activePointers.has(e.pointerId)) {
+                    const p = this.activePointers.get(e.pointerId);
+                    
+                    // Jitter Filter
+                    const dx = e.clientX - p.lastX;
+                    const dy = e.clientY - p.lastY;
+                    if(dx*dx + dy*dy < 100) return; 
+
+                    p.x = e.clientX; p.y = e.clientY;
+                    p.lastX = e.clientX; p.lastY = e.clientY;
+                    
+                    this.processLogic();
+                }
+            },
+            
+            handlePointerUp(e) {
+                if(isEditing) return; e.preventDefault();
+                try { document.getElementById('gamepad-overlay').releasePointerCapture(e.pointerId); } catch(err){}
+                
+                // Se o pointer nem foi registrado, sai
+                if(!this.activePointers.has(e.pointerId)) return;
+
+                this.activePointers.delete(e.pointerId);
+                if(this.joystick && this.joystick.activeId === e.pointerId) {
+                    this.joystick.activeId = null;
+                    this.joystick.visualDx = 0; this.joystick.visualDy = 0;
+                    this.updateJoyState('ArrowUp', false);
+                    this.updateJoyState('ArrowDown', false);
+                    this.updateJoyState('ArrowLeft', false);
+                    this.updateJoyState('ArrowRight', false);
+                    isDirty = true;
+                }
+                this.processLogic();
+            },
+            
+            updateJoyState(key, active) {
+                if(this.joystick.state[key] !== active) {
+                    this.joystick.state[key] = active;
+                    this.triggerKey(key, active ? 'keydown' : 'keyup');
+                }
+            },
+
+            nextAxisState(value, negativeKey, positiveKey) {
+                const state = this.joystick.state;
+                const press = this.pressThreshold;
+                const release = this.releaseThreshold;
+                let negative = state[negativeKey] ? value < -release : value < -press;
+                let positive = state[positiveKey] ? value > release : value > press;
+                if(negative && positive) {
+                    negative = value < 0;
+                    positive = value > 0;
+                }
+                return { negative, positive };
+            },
+            
+            processLogic() {
+                if(this.joystick && this.joystick.base.style.display !== 'none') {
+                    let joyPointer = null;
+                    if (this.joystick.activeId !== null && this.activePointers.has(this.joystick.activeId)) {
+                        joyPointer = this.activePointers.get(this.joystick.activeId);
+                    } else {
+                        this.joystick.activeId = null;
+                        for (let [pid, p] of this.activePointers) {
+                            if((p.x - this.joystick.baseCx)**2 + (p.y - this.joystick.baseCy)**2 < this.joystick.baseRadiusSq) {
+                                this.joystick.activeId = pid; joyPointer = p; break;
+                            }
+                        }
+                    }
+                    if (joyPointer) {
+                        let dx = joyPointer.x - this.joystick.baseCx;
+                        let dy = joyPointer.y - this.joystick.baseCy;
+                        const dist = Math.sqrt(dx*dx + dy*dy);
+                        if(dist > this.joystick.maxDist) { const r = this.joystick.maxDist / dist; dx *= r; dy *= r; }
+                        isDirty = true;
+                        const normX = dx / this.joystick.maxDist;
+                        const normY = dy / this.joystick.maxDist;
+                        const xState = this.nextAxisState(normX, 'ArrowLeft', 'ArrowRight');
+                        const yState = this.nextAxisState(normY, 'ArrowUp', 'ArrowDown');
+                        if(snapJoystick) {
+                            const snapX = xState.negative ? -1 : (xState.positive ? 1 : 0);
+                            const snapY = yState.negative ? -1 : (yState.positive ? 1 : 0);
+                            const snapLen = Math.hypot(snapX, snapY) || 1;
+                            if(snapX || snapY) {
+                                const visualDist = Math.min(dist, this.joystick.maxDist) / this.joystick.scaleFactor;
+                                this.joystick.visualDx = snapX * visualDist / snapLen;
+                                this.joystick.visualDy = snapY * visualDist / snapLen;
+                            } else {
+                                this.joystick.visualDx = dx / this.joystick.scaleFactor;
+                                this.joystick.visualDy = dy / this.joystick.scaleFactor;
+                            }
+                        } else {
+                            this.joystick.visualDx = dx / this.joystick.scaleFactor; 
+                            this.joystick.visualDy = dy / this.joystick.scaleFactor;
+                        }
+                        this.updateJoyState('ArrowUp', yState.negative);
+                        this.updateJoyState('ArrowDown', yState.positive);
+                        this.updateJoyState('ArrowLeft', xState.negative);
+                        this.updateJoyState('ArrowRight', xState.positive);
+                    }
+                }
+                for(let btn of this.buttons) {
+                    let pressed = false; let presserId = null;
+                    if(btn.activeBy !== null && this.activePointers.has(btn.activeBy)) {
+                        const p = this.activePointers.get(btn.activeBy);
+                        if((p.x - btn.cx)**2 + (p.y - btn.cy)**2 < btn.radiusSq) { pressed = true; presserId = btn.activeBy; }
+                    }
+                    if(!pressed) {
+                        for(let [pid, p] of this.activePointers) {
+                            if(this.joystick && this.joystick.activeId === pid) continue;
+                            if((p.x - btn.cx)**2 + (p.y - btn.cy)**2 < btn.radiusSq) { pressed = true; presserId = pid; break; }
+                        }
+                    }
+                    if(pressed !== btn.active) { 
+                        this.triggerKey(btn.key, pressed ? 'keydown' : 'keyup'); 
+                        btn.active = pressed; btn.activeBy = presserId; 
+                        isDirty = true;
+                    }
+                }
+            },
+            
+            visualLoop() {
+                if(isDirty) {
+                    if(this.joystick) {
+                        const t = `translate(-50%, -50%) translate(${this.joystick.visualDx}px, ${this.joystick.visualDy}px)`;
+                        if(this.joystick.lastTransform !== t) { this.joystick.thumb.style.transform = t; this.joystick.lastTransform = t; }
+                    }
+                    for(let btn of this.buttons) {
+                        if(btn.active !== btn.visualActive) {
+                            btn.visualActive = btn.active;
+                            if(btn.active) btn.el.classList.add('active'); else btn.el.classList.remove('active');
+                        }
+                    }
+                    isDirty = false;
+                }
+                requestAnimationFrame(() => this.visualLoop());
+            },
+            
+            registerButton(el, key) {
+                const rect = el.getBoundingClientRect();
+                const radiusSq = (Math.max(rect.width, rect.height) * 0.62) ** 2; 
+                this.buttons.push({ 
+                    el, key, cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2, radiusSq, 
+                    active: false, visualActive: false, activeBy: null
+                });
+            },
+            registerJoystick(baseEl, thumbEl) {
+                const rect = baseEl.getBoundingClientRect();
+                const scale = scaleData[baseEl.id] || 1.0;
+                thumbEl.style.left = '50%';
+                thumbEl.style.top = '50%';
+                thumbEl.style.transform = 'translate(-50%, -50%)';
+                this.joystick = { 
+                    base: baseEl, thumb: thumbEl, activeId: null, 
+                    maxDist: Math.max(44, rect.width * 0.36) * scale,
+                    baseCx: rect.left + rect.width/2, baseCy: rect.top + rect.height/2, baseRadiusSq: (rect.width * 0.75)**2,
+                    scaleFactor: scale, visualDx: 0, visualDy: 0, lastTransform: 'translate(-50%, -50%)', state: { ArrowUp:false, ArrowDown:false, ArrowLeft:false, ArrowRight:false }
+                };
+            },
+            releaseAll() {
+                for(let btn of this.buttons) {
+                    if(btn.active) this.triggerKey(btn.key, 'keyup');
+                    btn.active = false;
+                    btn.visualActive = false;
+                    btn.activeBy = null;
+                    btn.el.classList.remove('active');
+                }
+                if(this.joystick) {
+                    for(const key of ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight']) this.updateJoyState(key, false);
+                    this.joystick.activeId = null;
+                    this.joystick.visualDx = 0;
+                    this.joystick.visualDy = 0;
+                    this.joystick.thumb.style.transform = 'translate(-50%, -50%)';
+                    this.joystick.lastTransform = 'translate(-50%, -50%)';
+                }
+                this.activePointers.clear();
+            },
+            triggerKey(code, type) {
+                const ev = new KeyboardEvent(type, { code: code, key: code, bubbles: true, cancelable: true, view: window });
+                window.dispatchEvent(ev);
+                const cvs = document.querySelector('canvas');
+                if(cvs) cvs.dispatchEvent(ev);
+            },
+            resetCache() {
+                this.buttons = [];
+                document.querySelectorAll('.gp-btn, .menu-btn[data-key]').forEach(el => { 
+                    const s = scaleData[el.id] || 1.0;
+                    el.style.transform = `scale(${s})`;
+                    if(el.offsetParent) this.registerButton(el, el.dataset.key); 
+                });
+                const b = document.getElementById('joystick-base'), t = document.getElementById('joystick-thumb');
+                if(b) {
+                    const s = scaleData[b.id] || 1.0;
+                    b.style.transform = `scale(${s})`;
+                    this.registerJoystick(b, t);
+                }
+            }
+        };
+
+        const layer = document.getElementById('controls-layer'), gear = document.getElementById('gear-btn-fixed');
+        let hideControls = false, useJoystick = true, snapJoystick = true, hapticFeedback = true, isEditing = false;
+        let selectedEl = null; 
+        
+        const HTML_CONTROLS = `
+            <div class="gp-btn" id="gp-up" data-key="ArrowUp">ÃƒÂ¢Ã¢â‚¬â€œÃ‚Â²</div><div class="gp-btn" id="gp-down" data-key="ArrowDown">ÃƒÂ¢Ã¢â‚¬â€œÃ‚Â¼</div>
+            <div class="gp-btn" id="gp-left" data-key="ArrowLeft">ÃƒÂ¢Ã¢â‚¬â€Ã¢â€šÂ¬</div><div class="gp-btn" id="gp-right" data-key="ArrowRight">ÃƒÂ¢Ã¢â‚¬â€œÃ‚Â¶</div>
+            <div class="gp-btn" id="gp-y" data-key="KeyZ">Y</div><div class="gp-btn" id="gp-x" data-key="KeyX">X</div>
+            <div class="gp-btn" id="gp-a" data-key="KeyC">A</div><div class="gp-btn" id="gp-b" data-key="KeyX">B</div>
+            <div id="joystick-base"><div id="joystick-thumb"></div></div><div class="menu-btn" id="gp-pause" data-key="Escape"><div class="icon-pause"></div></div>
+        `;
+
+        const Settings = {
+            create() {
+                if(document.getElementById('settings-modal-injected')) return;
+                const div = document.createElement('div');
+                div.id = 'settings-modal-injected';
+                div.innerHTML = `
+                    <h2 style="text-align:center; margin:0 0 10px 0;">Settings</h2>
+                    <button class="st-btn" id="btn-save-data">Save Data</button>
+                    <button class="st-btn" id="btn-file-manager">File Manager</button>
+                    <div style="margin-top:5px;">
+                        <span>Opacity</span><input type="range" id="opt-opacity" min="0" max="1" step="0.1" value="1" style="width:100%; margin-top:5px;">
+                    </div>
+                    
+                    <button class="st-btn" id="btn-edit-layout">ÃƒÂ¢Ã…â€œÃ‚ÂÃƒÂ¯Ã‚Â¸Ã‚Â Move & Resize</button>
+                    <button class="st-btn" id="btn-reset-layout" style="background:#555;">ÃƒÂ¢Ã¢â‚¬Â Ã‚Âº Reset Layout</button>
+                    <div style="display:flex; flex-direction:column; gap:8px;">
+                        <span>Button Preset</span>
+                        <select id="layout-preset-select"></select>
+                        <button class="st-btn" id="btn-apply-preset">Apply Preset</button>
+                        <input id="layout-preset-name" placeholder="Custom preset name" style="width:100%; box-sizing:border-box; background:#222; border:1px solid #555; color:#fff; padding:8px; border-radius:4px;">
+                        <button class="st-btn" id="btn-save-preset">Save as New Preset</button>
+                        <button class="st-btn" id="btn-delete-preset" style="background:#6b2b2b;">Delete Preset</button>
+                    </div>
+                    <button class="st-btn btn-close" id="btn-close-settings">Close</button>
+                `;
+                document.body.appendChild(div);
+
+                const openAppDialog = (name) => {
+                    const app = window.celesteApp || window.app;
+                    if(!app || !app[name]) return alert("Game UI is still loading");
+                    Settings.destroy();
+                    app[name].showModal();
+                };
+                document.getElementById('btn-save-data').onclick = async () => {
+                    if(window.celesteDownloadSave) {
+                        try {
+                            await window.celesteDownloadSave();
+                            Settings.destroy();
+                        } catch(err) {
+                            console.error(err);
+                            alert("Save export failed. Try again after the game finishes loading.");
+                        }
+                    } else {
+                        openAppDialog('savesmenu');
+                    }
+                };
+                document.getElementById('btn-file-manager').onclick = () => openAppDialog('fs');
+                
+                document.getElementById('opt-opacity').value = layer.style.opacity || 1;
+                document.getElementById('opt-opacity').oninput = (e) => { 
+                    layer.style.opacity = e.target.value; if(!hideControls) gear.style.opacity = e.target.value; 
+                };
+                document.getElementById('btn-edit-layout').onclick = beginLayoutEdit;
+
+                populatePresetSelect();
+                document.getElementById('layout-preset-select').onchange = (e) => {
+                    document.getElementById('layout-preset-name').value = e.target.value === DEFAULT_PRESET_ID ? "" : e.target.value;
+                };
+                document.getElementById('btn-apply-preset').onclick = () => {
+                    const select = document.getElementById('layout-preset-select');
+                    currentPreset = select.value || DEFAULT_PRESET_ID;
+                    localStorage.setItem(CURRENT_PRESET_KEY, currentPreset);
+                    applyPresetData(currentPreset);
+                    Settings.destroy();
+                    render();
+                };
+                document.getElementById('btn-save-preset').onclick = () => {
+                    const id = (document.getElementById('layout-preset-name').value || "").trim();
+                    if(!id || id === DEFAULT_PRESET_ID) return alert("Choose a custom preset name");
+                    captureCurrentLayout();
+                    layoutPresets[id] = { layout: layoutData, scale: scaleData };
+                    currentPreset = id;
+                    savePresets();
+                    localStorage.setItem(CURRENT_PRESET_KEY, currentPreset);
+                    populatePresetSelect();
+                };
+                document.getElementById('btn-delete-preset').onclick = () => {
+                    const select = document.getElementById('layout-preset-select');
+                    const id = select.value;
+                    if(!id || id === DEFAULT_PRESET_ID) return alert("Default preset cannot be deleted");
+                    delete layoutPresets[id];
+                    currentPreset = DEFAULT_PRESET_ID;
+                    applyPresetData(currentPreset);
+                    savePresets();
+                    localStorage.setItem(CURRENT_PRESET_KEY, currentPreset);
+                    populatePresetSelect();
+                    render();
+                };
+                
+                const resetBtn = document.getElementById('btn-reset-layout');
+                resetBtn.onclick = () => {
+                    if (resetBtn.innerText.includes("Reset")) {
+                        resetBtn.innerText = "ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â Confirm?";
+                        resetBtn.style.background = "#e17055";
+                        setTimeout(() => {
+                            if(document.body.contains(resetBtn)) {
+                                resetBtn.innerText = "ÃƒÂ¢Ã¢â‚¬Â Ã‚Âº Reset Layout";
+                                resetBtn.style.background = "#555";
+                            }
+                        }, 3000);
+                    } else {
+                        localStorage.removeItem('celeste_layout_v53');
+                        localStorage.removeItem('celeste_scale_v53');
+                        currentPreset = DEFAULT_PRESET_ID;
+                        localStorage.setItem(CURRENT_PRESET_KEY, currentPreset);
+                        layoutData = {}; scaleData = {};
+                        document.querySelectorAll('.gp-btn, #joystick-base').forEach(el => el.style = "");
+                        Settings.destroy();
+                        render();
+                    }
+                };
+                document.getElementById('btn-close-settings').onclick = () => Settings.destroy();
+            },
+            destroy() { const el = document.getElementById('settings-modal-injected'); if(el) el.remove(); }
+        };
+
+        function beginLayoutEdit() {
+            if(hideControls) return alert("Touch controls are disabled in Celeste Options.");
+            Settings.destroy();
+            isEditing=true; document.body.classList.add('editing-layout');
+            document.getElementById('save-layout-btn').style.display='block';
+            document.getElementById('edit-controls-bar').style.display='flex';
+            editSnapshot = {
+                layout: JSON.parse(JSON.stringify(layoutData)),
+                scale: JSON.parse(JSON.stringify(scaleData))
+            };
+        }
+
+        window.celesteAndroidOpenLayoutEditor = beginLayoutEdit;
+
+        function render() {
+            if(hideControls) layer.innerHTML = ""; else {
+                layer.innerHTML = HTML_CONTROLS; 
+                const j = document.getElementById('joystick-base');
+                ['gp-up','gp-down','gp-left','gp-right'].forEach(id => { const el = document.getElementById(id); if(el) el.style.display = useJoystick ? 'none' : 'flex'; });
+                if(j) j.style.display = useJoystick ? 'block' : 'none';
+                loadLayout();
+            }
+            setTimeout(() => InputSystem.resetCache(), 100);
+        }
+
+        window.CelesteAndroidControlsRefresh = function() {
+            hideControls = localStorage.getItem('celeste_hide') === 'true';
+            useJoystick = localStorage.getItem('celeste_joy') !== 'false';
+            snapJoystick = localStorage.getItem('celeste_joy_snap') !== 'false';
+            hapticFeedback = localStorage.getItem('celeste_haptic_feedback') !== 'false';
+            render();
+        };
+
+        gear.onclick = (e) => {
+            e.stopPropagation();
+            if(document.getElementById('settings-modal-injected')) Settings.destroy();
+            else Settings.create();
+        };
+        
+        let dragEl=null, offX, offY;
+        const slider = document.getElementById('size-slider');
+        const sizeVal = document.getElementById('size-val');
+        const editBar = document.getElementById('edit-controls-bar');
+        let editSnapshot = null;
+        let barDragging = false, barX=0, barY=0;
+        
+        document.getElementById('edit-drag-handle').addEventListener('pointerdown', (e) => {
+            barDragging = true; const r = editBar.getBoundingClientRect();
+            barX = e.clientX - r.left; barY = e.clientY - r.top; e.target.setPointerCapture(e.pointerId);
+        });
+        document.getElementById('edit-drag-handle').addEventListener('pointermove', (e) => {
+            if(!barDragging) return;
+            editBar.style.left = (e.clientX - barX) + 'px'; editBar.style.top = (e.clientY - barY) + 'px'; editBar.style.transform = 'none';
+        });
+        document.getElementById('edit-drag-handle').addEventListener('pointerup', (e) => { barDragging = false; e.target.releasePointerCapture(e.pointerId); });
+
+        slider.oninput = (e) => {
+            if(!selectedEl) return;
+            const val = e.target.value / 100;
+            selectedEl.style.transform = `scale(${val})`;
+            scaleData[selectedEl.id] = val;
+            sizeVal.innerText = e.target.value + '%';
+        };
+
+        document.getElementById('save-layout-btn').onclick = () => { 
+            isEditing=false; document.body.classList.remove('editing-layout'); 
+            document.getElementById('save-layout-btn').style.display='none'; 
+            document.getElementById('edit-controls-bar').style.display='none';
+            if(selectedEl) selectedEl.classList.remove('selected-element');
+            selectedEl = null;
+            editSnapshot = null;
+            
+            captureCurrentLayout();
+            if(currentPreset !== DEFAULT_PRESET_ID) {
+                layoutPresets[currentPreset] = { layout: layoutData, scale: scaleData };
+                savePresets();
+            }
+            
+            localStorage.setItem('celeste_layout_v53', JSON.stringify(layoutData)); 
+            localStorage.setItem('celeste_scale_v53', JSON.stringify(scaleData));
+            InputSystem.resetCache(); 
+        };
+
+        document.getElementById('cancel-layout-btn').onclick = () => {
+            isEditing=false; document.body.classList.remove('editing-layout');
+            document.getElementById('save-layout-btn').style.display='none';
+            document.getElementById('edit-controls-bar').style.display='none';
+            if(selectedEl) selectedEl.classList.remove('selected-element');
+            selectedEl = null;
+            dragEl = null;
+            if(editSnapshot) {
+                layoutData = editSnapshot.layout || {};
+                scaleData = editSnapshot.scale || {};
+            }
+            editSnapshot = null;
+            render();
+        };
+        
+        document.getElementById('gamepad-overlay').addEventListener('pointerdown', e => { 
+            if(!isEditing || editBar.contains(e.target) || e.target.id === 'save-layout-btn') return; 
+            const el=document.elementFromPoint(e.clientX,e.clientY); 
+            if(el&&(el.classList.contains('gp-btn')||el.id==='joystick-base'||el.classList.contains('menu-btn'))){ 
+                if(selectedEl) selectedEl.classList.remove('selected-element');
+                selectedEl = el; selectedEl.classList.add('selected-element');
+                const currentScale = scaleData[el.id] || 1.0;
+                slider.value = currentScale * 100; sizeVal.innerText = Math.round(currentScale * 100) + '%';
+
+                dragEl=el; 
+                const r=el.getBoundingClientRect(); 
+                el.style.bottom = 'auto'; el.style.right = 'auto';
+                el.style.left = r.left + 'px'; el.style.top = r.top + 'px';
+                offX=e.clientX-r.left; offY=e.clientY-r.top; 
+                e.target.setPointerCapture(e.pointerId);
+            } else { if(selectedEl) selectedEl.classList.remove('selected-element'); selectedEl = null; }
+        });
+        
+        document.getElementById('gamepad-overlay').addEventListener('pointermove', e => { 
+            if(!isEditing||!dragEl) return; 
+            const l = (e.clientX-offX)+'px'; const t = (e.clientY-offY)+'px';
+            dragEl.style.left=l; dragEl.style.top=t;
+            layoutData[dragEl.id] = {left:l, top:t};
+        });
+        
+        document.getElementById('gamepad-overlay').addEventListener('pointerup', (e) => { 
+            if(dragEl) try{e.target.releasePointerCapture(e.pointerId);}catch(err){}
+            dragEl=null; 
+        });
+        
+        function loadLayout() { 
+            for(let id in layoutData) {
+                const el=document.getElementById(id); 
+                if(el){ 
+                    el.style.left=layoutData[id].left; el.style.top=layoutData[id].top; 
+                    el.style.bottom='auto'; el.style.right='auto'; 
+                } 
+            }
+            for(let id in scaleData) {
+                const el = document.getElementById(id);
+                if(el) el.style.transform = `scale(${scaleData[id]})`;
+            }
+        }
+
+        function loadPresets() {
+            try {
+                const presets = JSON.parse(localStorage.getItem(PRESET_KEY) || "{}");
+                if(!presets[DEFAULT_PRESET_ID]) presets[DEFAULT_PRESET_ID] = { layout: {}, scale: {} };
+                return presets;
+            } catch(e) {
+                return { [DEFAULT_PRESET_ID]: { layout: {}, scale: {} } };
+            }
+        }
+
+        function savePresets() {
+            layoutPresets[DEFAULT_PRESET_ID] = { layout: {}, scale: {} };
+            localStorage.setItem(PRESET_KEY, JSON.stringify(layoutPresets));
+        }
+
+        function applyPresetData(id) {
+            const preset = layoutPresets[id] || layoutPresets[DEFAULT_PRESET_ID];
+            layoutData = { ...(preset.layout || {}) };
+            scaleData = { ...(preset.scale || {}) };
+        }
+
+        function populatePresetSelect() {
+            const select = document.getElementById('layout-preset-select');
+            if(!select) return;
+            const ids = [DEFAULT_PRESET_ID, ...Object.keys(layoutPresets).filter(id => id !== DEFAULT_PRESET_ID).sort()];
+            select.innerHTML = ids.map(id => `<option value="${id}">${id === DEFAULT_PRESET_ID ? 'Default' : id}</option>`).join('');
+            select.value = currentPreset;
+            const input = document.getElementById('layout-preset-name');
+            if(input) input.value = currentPreset === DEFAULT_PRESET_ID ? "" : currentPreset;
+        }
+
+        function captureCurrentLayout() {
+            const newPos = {}; 
+            document.querySelectorAll('.gp-btn, .menu-btn, #joystick-base').forEach(el=>{
+                if(el.offsetWidth > 0) {
+                    let left = el.style.left;
+                    let top = el.style.top;
+                    if(!left || !top) {
+                        const rect = el.getBoundingClientRect();
+                        left = rect.left + 'px';
+                        top = rect.top + 'px';
+                    }
+                    newPos[el.id]={left:left, top:top}; 
+                }
+            }); 
+            layoutData = { ...layoutData, ...newPos };
+        }
+        
+        const sH=localStorage.getItem('celeste_hide'); if(sH==='true'){hideControls=true;}
+        const sJ=localStorage.getItem('celeste_joy'); if(sJ==='false'){useJoystick=false;} else {useJoystick=true;}
+        const sSnap=localStorage.getItem('celeste_joy_snap'); if(sSnap==='false'){snapJoystick=false;} else {snapJoystick=true;}
+        const sHaptic=localStorage.getItem('celeste_haptic_feedback'); if(sHaptic==='false'){hapticFeedback=false;} else {hapticFeedback=true;}
+        InputSystem.init(); render();
+    })();
+</script>
+
+</body>
+
+</html>
+
+
+

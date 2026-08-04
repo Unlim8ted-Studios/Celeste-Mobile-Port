@@ -1,0 +1,6 @@
+ANDROID_PORT_ABOUT=Android Port
+ANDROID_PORT_ABOUT_BODY=This mobile port was created by Unlim8ted. It adds Android-focused controls, startup recovery tools, haptics, and mobile UI integration. It builds on Mercury Workshop's Webleste/Celeste WASM work and the LucyYuih Android base. We actually love Mozilla though... it makes the multi threads work. Timecat is an upcoming Unlim8ted release.
+ANDROID_PORT_VISIT=Visit unlim8ted.com
+ANDROID_PORT_CLOSE=Close
+ANDROID_PORT_MOD_BROWSER=Mod Browser
+ANDROID_PORT_MOD_BROWSER_BODY=The in-game mod browser requires an Everest-enabled Android/WASM runtime with network and restart support. This menu is the integration point for the Olympus-style browser workflow.

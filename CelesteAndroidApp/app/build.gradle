@@ -1,0 +1,62 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "lucyyuih.celeste.wasm"
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "lucyyuih.celeste.wasm"
+        minSdk 26
+        targetSdk 35
+        versionCode 16
+        versionName "1.0.1"
+        ndk {
+            abiFilters "arm64-v8a"
+        }
+    }
+
+    signingConfigs {
+        celesteDebug {
+            storeFile file("../../celeste-debug.keystore")
+            storePassword "android"
+            keyAlias "celeste-debug"
+            keyPassword "android"
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.celesteDebug
+            debuggable true
+        }
+        release {
+            signingConfig signingConfigs.celesteDebug
+            minifyEnabled false
+        }
+    }
+
+    sourceSets {
+        main {
+            assets.srcDirs = ["../../assets"]
+        }
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging false
+        }
+    }
+
+    androidResources {
+        noCompress += ["data", "data.data"]
+        ignoreAssetsPattern = "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~"
+    }
+}
+
+dependencies {
+    implementation "org.mozilla.geckoview:geckoview:152.0.20260713164047"
+}
+
+
