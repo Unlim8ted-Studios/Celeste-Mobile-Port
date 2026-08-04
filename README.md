@@ -166,18 +166,18 @@ The helper scripts encode the common local steps:
 ## Features
 
 
-[x] Optional camera-centering mode designed specifically for touchscreen play while respecting room boundaries and cutscenes.
-[x] Uses Celeste's existing rumble events to drive Android haptic feedback.
-[ ] Touch support across the entire game UI.
-[x] Fully customizable touchscreen controls.
-[x] Drag, resize, and reposition every gameplay control.
-[x] Save and restore multiple control layout presets.
-[x] Built-in default layout preset.
-[x] Optional 8-way joystick snapping with matching visual feedback.
-[x] Touch controls configurable directly from the in-game Options menu.
-[x] Numerous additional mobile-specific quality-of-life improvements.
-[ ] Built-in map editing tools for creating and modifying Celeste maps.
-[x] Built-in mod browser and installer. 
+- [x] Optional camera-centering mode designed specifically for touchscreen play while respecting room boundaries and cutscenes.
+- [x] Uses Celeste's existing rumble events to drive Android haptic feedback.
+- [ ] Touch support across the entire game UI.
+- [x] Fully customizable touchscreen controls.
+- [x] Drag, resize, and reposition every gameplay control.
+- [x] Save and restore multiple control layout presets.
+- [x] Built-in default layout preset.
+- [x] Optional 8-way joystick snapping with matching visual feedback.
+- [x] Touch controls configurable directly from the in-game Options menu.
+- [x] Numerous additional mobile-specific quality-of-life improvements.
+- [ ] Built-in map editing tools for creating and modifying Celeste maps.
+- [x] Built-in mod browser and installer. 
 
 
 ## Runtime Notes
