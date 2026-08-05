@@ -248,3 +248,32 @@ Useful log filters:
 ```powershell
 adb.exe logcat CelesteAssetServer:D GeckoConsole:D GeckoRuntime:D AndroidRuntime:E *:S
 ```
+test: 
+<div align="center">
+  <svg width="600" height="150" viewBox="0 0 600 150" xmlns="http://w3.org">
+    <defs>
+      <!-- The hologram glow filter -->
+      <filter id="hologram-glow" x="-20%" y="-20%" width="140%" height="140%">
+        <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#00f3ff" flood-opacity="0.8"/>
+        <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="#00f3ff" flood-opacity="0.5"/>
+        <feDropShadow dx="0" dy="0" stdDeviation="15" flood-color="#00f3ff" flood-opacity="0.3"/>
+      </filter>
+    </defs>
+
+    <!-- Background card -->
+    <rect width="600" height="150" rx="15" fill="#0d1117" stroke="#30363d" stroke-width="1.5"/>
+
+    <!-- Terminal dots -->
+    <circle cx="25" cy="25" r="5" fill="#ff5f56"/>
+    <circle cx="40" cy="25" r="5" fill="#ffbd2e"/>
+    <circle cx="55" cy="25" r="5" fill="#27c93f"/>
+
+    <!-- Glowing code text -->
+    <text x="30" y="85" font-family="monospace" font-size="20" fill="#00f3ff" filter="url(#hologram-glow)">
+      const hologram = "active";
+    </text>
+    <text x="30" y="115" font-family="monospace" font-size="20" fill="#00f3ff" filter="url(#hologram-glow)">
+      console.log(`Status: ${hologram}`);
+    </text>
+  </svg>
+</div>
