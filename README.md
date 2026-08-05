@@ -26,12 +26,7 @@ This workspace builds an Android APK that runs the threaded Celeste WASM/Everest
 - "CelesteAndroidPatch/Source/Dialog/" - Everest dialog text used by the Android port mod.
 - "CelesteAndroidPatch/build/" - Generated packaged mod contents, including "AndroidPort.dll", dialog files, and metadata.
 - "CelesteAndroidPatch/CelesteAndroidPatch.zip" - Packaged copy of the Android Everest mod.
-- "reference/celeste-wasm/" - Mercury Workshop Celeste WASM source used to rebuild the threaded loader and runtime.
-- "reference/working/" - Extracted files and APK from the last known working Android build, retained for comparison and recovery.
-- "reference/probably not working/" - Older diagnostic and experimental APK builds.
 - "scripts/" - Build, packaging, and WebAssembly post-processing scripts.
-- "tools/" - Local Android SDK, Gradle, .NET, APK-signing, and other development tooling. This directory is machine-local and excluded from version control.
-- Root-level Java and C# helper files - Utilities used for APK reconstruction, signing, verification, and Everest inspection.
 
 
 ## Architecture
