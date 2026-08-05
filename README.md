@@ -16,15 +16,22 @@ This workspace builds an Android APK that runs the threaded Celeste WASM/Everest
 
 ## Layout
 
-
-- `geckoview-wrapper/` - Android Gradle project for the APK shell.
-- `assets/www/` - Web runtime and packaged Celeste/Everest assets shipped in the APK.
-- `assets/www/_framework/` - Threaded .NET WASM framework output used by the game.
-- `assets/www/Mods/AndroidPort.zip` - Bundled Everest mod for Android settings, touch hooks, haptics, and port UI.
-- `EverestAndroidPort/` - Source for the bundled Everest mod.
-- `upstream-celeste-wasm/` - Webleste/Celeste WASM source used to rebuild the threaded loader.
-- `scripts/` - Local maintenance scripts for post-processing build outputs.
-- `.android-sdk/`, `.gradle-home/`, `.gradle-user-home/` - Local Android/Gradle toolchains and caches.
+- "CelesteAndroidApp/" - Android Gradle project for the GeckoView APK shell.
+- "CelesteAndroidApp/app/src/main/" - Android application source, including "MainActivity", "LocalAssetServer", the manifest, and Android resources.
+- "CelesteAndroidApp/assets/www/" - Browser-facing Celeste/Everest runtime packaged into the APK.
+- "CelesteAndroidApp/assets/www/_framework/" - Threaded .NET WebAssembly framework output used by the game.
+- "CelesteAndroidApp/assets/www/celeste/" - Packaged Celeste and Everest assemblies required by the runtime.
+- "CelesteAndroidApp/assets/www/Mods/AndroidPort.zip" - Bundled Everest mod providing Android settings, touch hooks, haptics, and port-specific UI.
+- "CelesteAndroidPatch/Source/" - C# source for the bundled Android Everest mod.
+- "CelesteAndroidPatch/Source/Dialog/" - Everest dialog text used by the Android port mod.
+- "CelesteAndroidPatch/build/" - Generated packaged mod contents, including "AndroidPort.dll", dialog files, and metadata.
+- "CelesteAndroidPatch/CelesteAndroidPatch.zip" - Packaged copy of the Android Everest mod.
+- "reference/celeste-wasm/" - Mercury Workshop Celeste WASM source used to rebuild the threaded loader and runtime.
+- "reference/working/" - Extracted files and APK from the last known working Android build, retained for comparison and recovery.
+- "reference/probably not working/" - Older diagnostic and experimental APK builds.
+- "scripts/" - Build, packaging, and WebAssembly post-processing scripts.
+- "tools/" - Local Android SDK, Gradle, .NET, APK-signing, and other development tooling. This directory is machine-local and excluded from version control.
+- Root-level Java and C# helper files - Utilities used for APK reconstruction, signing, verification, and Everest inspection.
 
 
 ## Architecture
