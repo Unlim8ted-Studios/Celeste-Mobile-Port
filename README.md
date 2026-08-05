@@ -147,6 +147,7 @@ The helper scripts encode the common local steps:
 - [x] Numerous additional mobile-specific quality-of-life improvements.
 - [ ] Built-in map editing tools for creating and modifying Celeste maps.
 - [x] Built-in mod browser and installer.
+- [ ] actually get Everest to run with the changes.
 
 ## Runtime Notes
 
