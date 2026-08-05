@@ -276,7 +276,7 @@ adb.exe install -r .\celeste-fixed.apk
 Launch the application:
 
 ```powershell
-adb.exe shell am start -n lucyyuih.celeste.wasm/com.unlim8ted.celeste.MainActivity
+adb.exe shell am start -n com.unlim8ted.celeste/com.unlim8ted.celeste.MainActivity
 ```
 
 View the most useful log output:
