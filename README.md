@@ -291,3 +291,15 @@ adb.exe logcat -c
 adb.exe shell am start -n lucyyuih.celeste.wasm/com.unlim8ted.celeste.MainActivity
 adb.exe logcat CelesteAssetServer:D GeckoConsole:D GeckoRuntime:D AndroidRuntime:E *:S
 ```
+
+License and Attribution
+
+This is an unofficial community project created by Unlim8ted Studios.
+
+Original Android integration code and other original contributions by Unlim8ted Studios are shared as part of this project. Contributions, issue reports, and improvements are welcome.
+
+This project builds upon or interfaces with Celeste WASM/Webleste, Everest, GeckoView, and other third-party software. Those components remain subject to their respective licenses and copyright notices.
+
+Celeste and its associated intellectual property belong to their respective rights holders. Commercial Celeste game data, including "data.data", is not included and must be supplied from a legally obtained copy of the game.
+
+This project is not affiliated with or endorsed by Extremely OK Games.
