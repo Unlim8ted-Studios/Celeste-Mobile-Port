@@ -1,9 +1,22 @@
 using System;
+using System.Runtime.InteropServices;
+#if BROWSER
 using System.Runtime.InteropServices.JavaScript;
+#endif
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Input;
+using Monocle;
 
 namespace Celeste.Mod.AndroidPort;
 
 internal static partial class AndroidBridge {
+#if BROWSER
+    public static bool IsBrowser => true;
+#else
+    public static bool IsBrowser => OperatingSystem.IsBrowser();
+#endif
+
+#if BROWSER
     [JSImport("celesteAndroidHaptic", "android-port.js")]
     private static partial void jsHaptic(string strength, string length);
 
@@ -39,78 +52,82 @@ internal static partial class AndroidBridge {
 
     [JSImport("celesteAndroidConsumeTouchScroll", "android-port.js")]
     private static partial double jsConsumeTouchScroll();
+#else
+    private static void jsHaptic(string strength, string length) {}
+    private static void jsOpenUrl(string url) {}
+    private static void jsOpenModBrowser() {}
+    private static void jsOpenSaveData() {}
+    private static void jsOpenFileManager() {}
+    private static void jsOpenLayoutEditor() {}
+    private static void jsResetGame() {}
+    private static void jsSetOption(string key, string value) {}
+    private static bool jsConsumeTouchTap() => false;
+    private static double jsTouchX() => -1;
+    private static double jsTouchY() => -1;
+    private static double jsConsumeTouchScroll() => 0;
+#endif
 
-    public static void Haptic(string strength, string length) {
-        invoke(() => jsHaptic(strength, length));
-    }
+    public static void Haptic(string strength, string length) => invoke(() => jsHaptic(strength, length));
+    public static void OpenUrlPrompt(string url) => invoke(() => jsOpenUrl(url));
+    public static void OpenModBrowser() => invoke(jsOpenModBrowser);
+    public static void OpenSaveData() => invoke(jsOpenSaveData);
+    public static void OpenFileManager() => invoke(jsOpenFileManager);
+    public static void OpenLayoutEditor() => invoke(jsOpenLayoutEditor);
+    public static void ResetGame() => invoke(jsResetGame);
+    public static void SetOption(string key, bool enabled) => invoke(() => jsSetOption(key, enabled ? "true" : "false"));
 
-    public static void OpenUrlPrompt(string url) {
-        invoke(() => jsOpenUrl(url));
-    }
+    private static bool desktopTapConsumed = false;
+    private static Vector2 dragStartPos;
+    private static bool potentialTap = false;
 
-    public static void OpenModBrowser() {
-        invoke(jsOpenModBrowser);
-    }
+    public static bool TapPressed => IsBrowser ? jsConsumeTouchTap() : (MInput.Mouse.ReleasedLeftButton && potentialTap && !desktopTapConsumed);
 
-    public static void OpenSaveData() {
-        invoke(jsOpenSaveData);
-    }
-
-    public static void OpenFileManager() {
-        invoke(jsOpenFileManager);
-    }
-
-    public static void OpenLayoutEditor() {
-        invoke(jsOpenLayoutEditor);
-    }
-
-    public static void ResetGame() {
-        invoke(jsResetGame);
-    }
-
-    public static void SetOption(string key, bool enabled) {
-        invoke(() => jsSetOption(key, enabled ? "true" : "false"));
+    public static void UpdateDesktopInput() {
+        if (IsBrowser) return;
+        if (MInput.Mouse.PressedLeftButton) {
+            dragStartPos = MInput.Mouse.Position;
+            potentialTap = true;
+            desktopTapConsumed = false;
+        }
+        if (MInput.Mouse.CheckLeftButton) {
+            if (Vector2.Distance(dragStartPos, MInput.Mouse.Position) > 20f) potentialTap = false;
+        }
     }
 
     public static bool ConsumeTouchTap() {
-        try {
-            return jsConsumeTouchTap();
-        } catch (Exception) {
-            return false;
+        if (IsBrowser) return jsConsumeTouchTap();
+        if (MInput.Mouse.ReleasedLeftButton && potentialTap && !desktopTapConsumed) {
+            desktopTapConsumed = true;
+            potentialTap = false;
+            return true;
         }
+        return false;
+    }
+
+    public static void ResetDesktopTap() {
+        desktopTapConsumed = false;
     }
 
     public static Vector2Like TouchPosition() {
-        try {
-            return new Vector2Like((float) jsTouchX(), (float) jsTouchY());
-        } catch (Exception) {
-            return new Vector2Like(-1f, -1f);
-        }
+        if (!IsBrowser) return new Vector2Like(MInput.Mouse.X, MInput.Mouse.Y);
+        try { return new Vector2Like((float) jsTouchX(), (float) jsTouchY()); }
+        catch { return new Vector2Like(-1f, -1f); }
     }
 
     public static float ConsumeTouchScroll() {
-        try {
-            return (float) jsConsumeTouchScroll();
-        } catch (Exception) {
-            return 0f;
-        }
+        if (!IsBrowser) return MInput.Mouse.WheelDelta;
+        try { return (float) jsConsumeTouchScroll(); }
+        catch { return 0f; }
     }
 
     private static void invoke(Action action) {
-        try {
-            action();
-        } catch (Exception) {
-            // Desktop Everest and vanilla WASM builds do not expose the Android JS bridge.
-        }
+        if (!IsBrowser) return;
+        try { action(); } catch { }
     }
 
     public readonly struct Vector2Like {
         public readonly float X;
         public readonly float Y;
-
-        public Vector2Like(float x, float y) {
-            X = x;
-            Y = y;
-        }
+        public Vector2Like(float x, float y) { X = x; Y = y; }
     }
 }

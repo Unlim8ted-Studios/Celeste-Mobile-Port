@@ -3,17 +3,17 @@ plugins {
 }
 
 android {
-    namespace "lucyyuih.celeste.wasm"
+    namespace "com.unlim8ted.celeste"
     compileSdk 36
 
     defaultConfig {
-        applicationId "lucyyuih.celeste.wasm"
+        applicationId "com.unlim8ted.celeste"
         minSdk 26
         targetSdk 35
         versionCode 16
         versionName "1.0.1"
         ndk {
-            abiFilters "arm64-v8a"
+            abiFilters "arm64-v8a", "x86_64"
         }
     }
 
@@ -39,7 +39,7 @@ android {
 
     sourceSets {
         main {
-            assets.srcDirs = ["../../assets"]
+            // Using default src/main/assets location
         }
     }
 
@@ -50,7 +50,7 @@ android {
     }
 
     androidResources {
-        noCompress += ["data", "data.data"]
+        noCompress += ["data", "data.data", ".dll", ".wasm", ".dat", ".bank", ".js", ".json"]
         ignoreAssetsPattern = "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~"
     }
 }
@@ -58,5 +58,3 @@ android {
 dependencies {
     implementation "org.mozilla.geckoview:geckoview:152.0.20260713164047"
 }
-
-
