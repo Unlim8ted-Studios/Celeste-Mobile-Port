@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>MobileMultiplayer</AssemblyName>
+    <RootNamespace>Celeste.Mod.MobileMultiplayer</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>bin</OutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Celeste">
+      <HintPath>D:\SteamLibrary\steamapps\common\Celeste\Celeste.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="FNA">
+      <HintPath>D:\SteamLibrary\steamapps\common\Celeste\FNA.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="MonoMod.RuntimeDetour">
+      <HintPath>D:\SteamLibrary\steamapps\common\Celeste\MonoMod.RuntimeDetour.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="MMHOOK_Celeste">
+      <HintPath>D:\SteamLibrary\steamapps\common\Celeste\MMHOOK_Celeste.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <Reference Include="CelesteNet.Client">
+      <HintPath>..\CelesteNet\CelesteNet.Client\bin\Release\net8.0\CelesteNet.Client.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="CelesteNet.Shared">
+      <HintPath>..\CelesteNet\CelesteNet.Shared\bin\Release\net8.0\CelesteNet.Shared.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!--
+    The Host feature uses the real CelesteNet.Server runtime, but keeps this
+    Everest mod deployable as one DLL. Your build script already builds
+    CelesteNet.Server before the mods, so its output DLLs are embedded here.
+    They are loaded only if HOST is actually used.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\CelesteNet\CelesteNet.Server\bin\Release\net8.0\*.dll"
+                      Exclude="..\CelesteNet\CelesteNet.Server\bin\Release\net8.0\Celeste.dll;..\CelesteNet\CelesteNet.Server\bin\Release\net8.0\FNA.dll;..\CelesteNet\CelesteNet.Server\bin\Release\net8.0\MMHOOK_Celeste.dll">
+      <LogicalName>MobileMultiplayer.EmbeddedServer.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+</Project>

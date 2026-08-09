@@ -1,0 +1,6 @@
+- Name: MobileBridge
+  Version: 1.0.0
+  DLL: MobileBridge.dll
+  Dependencies:
+    - Name: EverestCore
+      Version: 1.5577.0

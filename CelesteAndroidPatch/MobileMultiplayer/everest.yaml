@@ -1,0 +1,8 @@
+- Name: MobileMultiplayer
+  Version: 1.0.0
+  DLL: MobileMultiplayer.dll
+  Dependencies:
+    - Name: EverestCore
+      Version: 1.5577.0
+    - Name: CelesteNet.Client
+      Version: 2.0.0

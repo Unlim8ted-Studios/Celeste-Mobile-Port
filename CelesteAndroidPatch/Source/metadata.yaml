@@ -1,6 +1,0 @@
-- Name: AndroidPort
-  Version: 0.1.0
-  DLL: bin/AndroidPort.dll
-  Dependencies:
-    - Name: Everest
-      Version: 1.5577.0
