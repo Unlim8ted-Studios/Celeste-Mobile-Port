@@ -1,306 +1,846 @@
+<div align="center">
+
 # Celeste Android WASM Port
 
-This workspace builds an Android APK that runs the threaded Celeste WASM/Everest runtime inside GeckoView. The Android application hosts the packaged web runtime from `CelesteAndroidApp/assets/www/` on a local HTTP server with the isolation headers required for `SharedArrayBuffer`.
+### Celeste + Everest on Android, powered by threaded .NET WebAssembly and GeckoView
 
-## Credits
+An unofficial Android port focused on bringing a complete, mod-capable Celeste experience to mobile with customizable touch controls, haptics, save management, multiplayer support, and mobile-specific improvements.
 
-- Mobile port and Android integration: Unlim8ted Studios, https://unlim8ted.com
-- WASM base: Mercury Workshop's Webleste / Celeste WASM work, https://github.com/MercuryWorkshop/celeste-wasm
-  - GeckoView is used because it supports the threaded WASM and cross-origin-isolation requirements of the port.
-- Android base attribution: LucyYuih, https://gamejolt.com/games/CelesteWASMAndroid/1043072
-- Celeste is owned by Extremely OK Games, Ltd. This repository does not grant rights to the commercial game assets.
+**Developed by [Unlim8ted Studios](https://unlim8ted.com)**
 
-Commercial Celeste game files are not included in this repository. Building a playable APK requires files from a legally obtained copy of Celeste.
+</div>
 
-## Layout
+---
 
-- `CelesteAndroidApp/` - Android Gradle project for the GeckoView APK shell.
-- `CelesteAndroidApp/app/src/main/` - Android application source, including `MainActivity`, `LocalAssetServer`, the manifest, and Android resources.
-- `CelesteAndroidApp/assets/www/` - Browser-facing Celeste/Everest runtime packaged into the APK.
-- `CelesteAndroidApp/assets/www/_framework/` - Threaded .NET WebAssembly framework output used by the game.
-- `CelesteAndroidApp/assets/www/celeste/` - Packaged Celeste and Everest assemblies required by the runtime.
-- `CelesteAndroidApp/assets/www/Mods/AndroidPort.zip` - Bundled Everest mod providing Android settings, touch hooks, haptics, and port-specific UI.
-- `CelesteAndroidPatch/Source/` - C# source for the bundled Android Everest mod.
-- `CelesteAndroidPatch/Source/Dialog/` - Everest dialog text used by the Android port mod.
-- `CelesteAndroidPatch/build/` - Generated packaged mod contents, including `AndroidPort.dll`, dialog files, and metadata.
-- `CelesteAndroidPatch/CelesteAndroidPatch.zip` - Packaged copy of the Android Everest mod.
-- `scripts/` - Build, packaging, and WebAssembly post-processing scripts.
+> [!IMPORTANT]
+> **Celeste game files are not distributed with this repository.**  
+> Building a playable copy requires files from a legally obtained copy of Celeste.
 
-## Architecture
+> [!NOTE]
+> **Project status: Active development.**  
+> The Android host, threaded WASM runtime, touch interface, and supporting infrastructure are functional. Work is ongoing to complete compatibility with the modified Everest runtime and finish several mobile-specific features.
 
-This port is a native Android shell around the Celeste/Everest WebAssembly runtime. The APK does not run Celeste as Android-native game code. Instead, it packages the threaded .NET WASM build, game data, web loader, and Android-specific Everest mod under `CelesteAndroidApp/assets/www/`, then serves those files to an embedded GeckoView instance from inside the application.
+## Overview
 
-The primary motivation for this architecture is portability. By keeping nearly all game logic inside the shared WebAssembly runtime, the same Celeste/Everest build can be hosted on multiple platforms with a relatively small platform-specific shell. Android currently uses GeckoView as its host, while future ports can reuse the same runtime with platform-specific implementations for input, storage, haptics, and other operating-system services.
+Celeste Android WASM Port runs the threaded Celeste/Everest WebAssembly runtime inside an embedded **GeckoView** browser engine.
 
-### Android APK Shell
+Rather than attempting to rewrite Celeste as native Android game code, the project keeps nearly all of the existing game and Everest runtime inside .NET WebAssembly. A relatively small Android host provides the platform-specific functionality needed for mobile, including:
 
-The Android project in `CelesteAndroidApp/` builds a single-activity APK:
+- Touch controls
+- Haptics
+- Storage and save persistence
+- File management
+- Mod management
+- Mobile UI integration
+- Multiplayer hosting and joining
+- Android lifecycle and fullscreen behavior
 
-- `MainActivity` creates a fullscreen, immersive, landscape-only activity.
-- `MainActivity` starts `LocalAssetServer` on `127.0.0.1` using a randomly selected local port.
-- `MainActivity` writes a GeckoView configuration file enabling shared memory and WASM threads.
-- A `GeckoRuntime`, `GeckoSession`, and `GeckoView` are created in-process.
-- GeckoView loads the local server root URL, which resolves to `CelesteAndroidApp/assets/www/index.html`.
+The web runtime is packaged under:
 
-Android WebView is intentionally not used for gameplay because this runtime depends on the cross-origin-isolated environment required by threaded WASM and `SharedArrayBuffer`. GeckoView is embedded directly in the application, so gameplay stays inside the Android process rather than launching an external browser.
+```text
+CelesteAndroidApp/assets/www/
+```
 
-### Local Asset Server
+and served to GeckoView through a local HTTP server with the cross-origin isolation headers required for threaded WebAssembly and `SharedArrayBuffer`.
 
-`LocalAssetServer.java` is a small HTTP server backed by Android packaged assets:
+This architecture keeps the actual game runtime largely platform-independent while allowing Android-specific functionality to be built around it.
 
-- It binds only to `127.0.0.1`, so the packaged runtime is exposed only to the local device.
-- It serves files from the `www` asset root that Gradle maps from `CelesteAndroidApp/assets/www/`.
-- It supports `GET` and `HEAD` requests.
-- It sanitizes request paths and rejects traversal attempts.
-- It applies the isolation headers required by the threaded runtime:
-  - `Cross-Origin-Opener-Policy: same-origin`
-  - `Cross-Origin-Embedder-Policy: require-corp`
-  - `Cross-Origin-Resource-Policy: cross-origin`
-  - `Permissions-Policy: cross-origin-isolated=*`
-- It maps common web, image, text, and WASM MIME types.
-- It reassembles split `dotnet.native.*.wasm` files at request time by streaming numbered asset chunks as one `application/wasm` response.
-- It exposes a diagnostic `/__android_port_log` endpoint that allows JavaScript messages to appear in Android logcat under `CelesteAssetServer`.
-
-The split-WASM behavior exists because very large WASM files are easier to package and serve reliably as multiple asset chunks.
-
-### Web Runtime
-
-`CelesteAndroidApp/assets/www/` contains the browser-facing runtime:
-
-- `index.html`, `styles.css`, and `bundle.js` provide the loader, UI shell, Android overlay controls, save manager, file manager entry points, and bridge functions.
-- `_framework/` contains the threaded .NET WASM output produced by the Celeste WASM loader build.
-- `cfg.js` describes the packaged `data.data` payload.
-- `celeste/`, `assets/`, and `plugins/` contain the game and runtime web assets.
-- `Mods/AndroidPort.zip` is loaded by Everest as the bundled Android integration mod.
-
-The loader keeps `/libsdl` memory-backed during startup. Saves and mods are persisted explicitly from the in-memory runtime filesystem into IndexedDB snapshots and restored during initialization. This avoids the GeckoView startup hangs that occurred when the complete runtime tree was persisted through OPFS.
-
-### WASM Loader Rebuild and Post-Processing
-
-The threaded loader is rebuilt from Mercury Workshop's Celeste WASM source. After publishing, `scripts/postprocess-framework.sh` copies the framework output and applies Android-specific runtime patches:
-
-- Transfers the main `.canvas` to the threaded runtime path.
-- Routes Emscripten main-thread assembly calls through `runMainThreadEmAsm`.
-- Raises the runtime ULEB limit used by the loader.
-- Splits large `dotnet.native.*.wasm` files into numbered 20 MB chunks.
-- Copies the patched framework into `CelesteAndroidApp/assets/www/_framework/`.
-
-### Everest Android Port Mod
-
-`CelesteAndroidPatch/Source/` contains a C# Everest module packaged as `CelesteAndroidApp/assets/www/Mods/AndroidPort.zip`. It adds Android-specific behavior inside Celeste:
-
-- Registers an Android Port options menu.
-- Synchronizes touch control, joystick, snap, and haptic settings with JavaScript.
-- Adds menu buttons for layout editing, save export, file management, reset, port information, and mod browser integration.
-- Skips the initial title screen and launches into the main menu.
-- Removes the fullscreen option from the in-game options menu because the Android shell owns fullscreen behavior.
-- Maps touch taps and scroll gestures into the main menu, file select, chapter select, and text menus.
-- Forwards Celeste rumble events to the JavaScript haptic bridge.
-- Optionally recenters the camera around the player for mobile play.
-
-`AndroidBridge.cs` uses .NET JavaScript imports to call functions defined by the web runtime. The bridge is defensive: calls are wrapped so the mod can still load in non-Android or desktop WASM environments where the Android JavaScript bridge is unavailable.
-
-### JavaScript Bridge and Mobile UI
-
-The web runtime exposes `window.celesteAndroid...` functions consumed by the Everest mod:
-
-- Haptic feedback requests.
-- URL prompts.
-- Mod browser launch.
-- Save manager launch.
-- File manager launch.
-- Touch layout editor launch.
-- Game data reset.
-- Option synchronization.
-- Touch tap, touch position, and scroll consumption in Celeste canvas coordinates.
-
-The same JavaScript layer provides the mobile control overlay, joystick mode, optional 8-way snapping, haptic setting persistence, layout presets, drag-and-resize editing, and reset behavior through `localStorage`.
-
-### Build and Packaging Flow
-
-The normal build flow is:
-
-1. Build `CelesteAndroidPatch/Source/AndroidPort.csproj`.
-2. Package `metadata.yaml`, `Dialog/`, and `bin/AndroidPort.dll` into `AndroidPort.zip`.
-3. Copy `AndroidPort.zip` into `CelesteAndroidApp/assets/www/Mods/`.
-4. Rebuild and post-process the threaded WASM framework when loader changes are needed.
-5. Build the Android Gradle project in `CelesteAndroidApp/`.
-6. Copy the debug APK to `celeste-fixed.apk`.
-
-The helper scripts encode the common local steps:
-
-- `scripts/package-android-port-mod.ps1` builds and packages the bundled Everest mod.
-- `scripts/postprocess-framework.sh` patches and copies the WASM framework output.
-- `scripts/build-apk.ps1` builds the Android APK and copies the result to `celeste-fixed.apk`.
+---
 
 ## Features
 
-- [x] Optional camera-centering mode designed specifically for touchscreen play while respecting room boundaries and cutscenes.
-- [x] Uses Celeste's existing rumble events to drive Android haptic feedback.
-- [ ] Touch support across the entire game UI.
-- [x] Fully customizable touchscreen controls.
-- [x] Drag, resize, and reposition every gameplay control.
-- [x] Save and restore multiple control layout presets.
-- [x] Built-in default layout preset.
-- [x] Optional 8-way joystick snapping with matching visual feedback.
-- [x] Touch controls configurable directly from the in-game Options menu.
-- [x] Numerous additional mobile-specific quality-of-life improvements.
-- [ ] Built-in map editing tools for creating and modifying Celeste maps.
-- [x] Built-in mod browser and installer.
-- [ ] actually get Everest to run with the changes.
+### 🎮 Touch Controls
 
-## Runtime Notes
+- [x] Fully customizable touchscreen controls
+- [x] Drag, resize, and reposition gameplay controls
+- [x] Save and restore multiple control-layout presets
+- [x] Built-in default mobile layout
+- [x] Optional 8-way joystick snapping
+- [x] Matching visual feedback for joystick snapping
+- [x] Configure touch controls directly from Celeste's Options menu
+- [x] Complete touch support across every game UI
 
-- Android WebView is not used for gameplay because this build requires a cross-origin-isolated threaded WASM environment.
-- GeckoView is used in-process rather than as an external browser window.
-- `/libsdl` is intentionally memory-backed in the rebuilt loader. Persisting the complete runtime tree through OPFS caused GeckoView to hang during initialization.
-- Saves and mods are persisted explicitly from JavaScript into IndexedDB snapshots and restored during initialization.
-- Large `dotnet.native.*.wasm` files are stored as numbered chunks and streamed as a single WASM response by `LocalAssetServer`.
-- Commercial Celeste game files must be supplied locally from a legally obtained copy of the game.
+### 📱 Mobile Improvements
 
-## Build
+- [x] Optional mobile camera-centering mode
+- [x] Camera centering respects room boundaries
+- [x] Camera centering automatically avoids interfering with cutscenes
+- [x] Mobile-specific menu behavior
+- [x] Android-specific quality-of-life improvements
+- [x] Mobile-friendly startup behavior
+- [x] Android-owned fullscreen handling
 
-Run all PowerShell commands from:
+### 📳 Haptics
+
+- [x] Android haptic feedback
+- [x] Uses Celeste's existing rumble events
+- [x] User-configurable haptic behavior
+- [x] JavaScript-to-Android haptic bridge
+
+### 💾 Saves & Files
+
+- [x] Save persistence
+- [x] IndexedDB-backed save snapshots
+- [x] Save manager
+- [x] File manager
+- [x] Game-data reset functionality
+- [x] Restore persistent data during runtime initialization
+
+### 🧩 Mods & Everest
+
+- [x] Everest mod support
+- [x] Built-in mod browser
+- [x] Mod installer
+- [x] Mod persistence
+- [x] Android-specific Everest integration
+- [ ] Complete compatibility with the modified Everest runtime
+
+### 🌐 Multiplayer
+
+- [ ] Host multiplayer sessions directly from mobile
+- [ ] Join multiplayer sessions directly from mobile
+- [ ] Mobile-friendly multiplayer configuration
+- [ ] Mobile-friendly multiplayer session UI
+
+### 🗺️ Editing
+
+- [ ] Improved in-game map editing
+- [ ] Mobile-friendly map creation and modification tools
+
+### ⚙️ Runtime
+
+- [x] Threaded .NET WebAssembly
+- [x] Embedded GeckoView runtime
+- [x] Cross-origin-isolated local asset server
+- [x] `SharedArrayBuffer` support
+- [x] Split-WASM streaming
+- [x] Explicit save and mod persistence
+- [x] Android runtime diagnostics through logcat
+
+---
+
+## Architecture
+
+At a high level:
 
 ```text
-O:\celeste
+┌───────────────────────────────────────┐
+│               Android                 │
+│                                       │
+│  MainActivity                         │
+│       │                               │
+│       ├────────► LocalAssetServer     │
+│       │               │               │
+│       │               ▼               │
+│       │        assets/www/            │
+│       │                               │
+│       ▼                               │
+│   GeckoView                           │
+└───────┬───────────────────────────────┘
+        │
+        ▼
+┌───────────────────────────────────────┐
+│       Threaded .NET WASM Runtime      │
+│                                       │
+│          Celeste + Everest            │
+│                                       │
+│  MobileBridge / Everest integration   │
+└───────────────────────────────────────┘
 ```
 
-### Build and Package the Everest Mod
+The APK does **not** run Celeste as Android-native game code.
 
-Build the Android Everest mod:
+Instead, Celeste and Everest remain inside the WebAssembly environment while Android provides the platform host around them.
+
+This separation makes the runtime considerably more portable. The same core WASM environment can potentially be hosted on other platforms while replacing only the platform-specific services for things such as:
+
+- Input
+- Haptics
+- Storage
+- Window management
+- Native UI
+- File access
+- Platform integrations
+
+---
+
+## Why GeckoView?
+
+The threaded runtime requires browser functionality including:
+
+```text
+SharedArrayBuffer
+WebAssembly threads
+Cross-origin isolation
+```
+
+The Android application therefore embeds **Mozilla GeckoView** rather than relying on Android WebView.
+
+GeckoView runs directly inside the application, so Celeste remains inside the Android process instead of opening in an external browser.
+
+And yes, **we actually love Mozilla** — GeckoView is what makes the multithreaded runtime practical here. ❤️🦊
+
+---
+
+## Project Layout
+
+```text
+Celeste-Mobile-Port/
+│
+├── CelesteAndroidApp/
+│   ├── app/
+│   │   └── src/main/
+│   │       ├── AndroidManifest.xml
+│   │       ├── java/com/unlim8ted/celeste/
+│   │       │   ├── MainActivity.java
+│   │       │   └── LocalAssetServer.java
+│   │       └── res/
+│   │
+│   ├── assets/
+│   │   └── www/
+│   │       ├── index.html
+│   │       ├── bundle.js
+│   │       ├── styles.css
+│   │       ├── cfg.js
+│   │       ├── _framework/
+│   │       ├── celeste/
+│   │       ├── assets/
+│   │       ├── plugins/
+│   │       └── Mods/
+│   │
+│   ├── gradle/
+│   ├── gradlew
+│   └── gradlew.bat
+│
+├── CelesteAndroidPatch/
+│   ├── Source/
+│   └── build/
+│
+└── scripts/
+    ├── build-apk.ps1
+    ├── package-android-port-mod.ps1
+    └── postprocess-framework.sh
+```
+
+### Important Paths
+
+| Path | Purpose |
+|---|---|
+| `CelesteAndroidApp/` | Android Gradle project and GeckoView host |
+| `CelesteAndroidApp/app/src/main/` | Native Android application source |
+| `CelesteAndroidApp/assets/www/` | Browser-facing Celeste/Everest runtime |
+| `CelesteAndroidApp/assets/www/_framework/` | Threaded .NET WASM runtime |
+| `CelesteAndroidApp/assets/www/celeste/` | Locally supplied game/runtime assemblies |
+| `CelesteAndroidApp/assets/www/Mods/` | Everest mods bundled into the local build |
+| `CelesteAndroidPatch/Source/` | Android-specific Everest integration source |
+| `scripts/` | Build, packaging, and WASM post-processing scripts |
+
+Generated builds, SDKs, signing keys, commercial game data, caches, and other machine-local files are intentionally excluded from version control.
+
+---
+
+# Android Host
+
+## MainActivity
+
+`MainActivity` provides the native Android shell.
+
+It is responsible for:
+
+- Creating a fullscreen immersive activity
+- Enforcing landscape orientation
+- Starting the local asset server
+- Configuring GeckoView
+- Creating the `GeckoRuntime`
+- Creating the `GeckoSession`
+- Attaching the session to `GeckoView`
+- Loading the local runtime
+- Managing Android-specific lifecycle behavior
+
+The runtime is loaded from a loopback address similar to:
+
+```text
+http://127.0.0.1:<random-port>/
+```
+
+which resolves to the packaged:
+
+```text
+CelesteAndroidApp/assets/www/index.html
+```
+
+---
+
+## Local Asset Server
+
+`LocalAssetServer.java` is a lightweight HTTP server backed by Android packaged assets.
+
+It:
+
+- Binds exclusively to `127.0.0.1`
+- Selects a local port at runtime
+- Serves files from the packaged `www` runtime
+- Supports `GET`
+- Supports `HEAD`
+- Sanitizes request paths
+- Rejects directory traversal
+- Maps required MIME types
+- Streams large WASM binaries
+- Provides Android-side diagnostics
+
+### Cross-Origin Isolation
+
+The server applies:
+
+```http
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+Cross-Origin-Resource-Policy: cross-origin
+Permissions-Policy: cross-origin-isolated=*
+```
+
+These headers provide the isolated environment required by the threaded runtime.
+
+### Runtime Logging
+
+The diagnostic endpoint:
+
+```text
+/__android_port_log
+```
+
+allows JavaScript messages to appear in Android logcat under:
+
+```text
+CelesteAssetServer
+```
+
+---
+
+# Web Runtime
+
+`CelesteAndroidApp/assets/www/` contains the browser-facing portion of the application.
+
+## Core Files
+
+### `index.html`
+
+Initial document and runtime bootstrap.
+
+### `bundle.js`
+
+Contains much of the mobile/browser integration layer:
+
+- WASM loader behavior
+- Mobile touch controls
+- Layout editing
+- Save management
+- File management
+- Mod browser
+- Haptic bridge
+- Android bridge functions
+- Runtime persistence
+- Mobile input behavior
+
+### `styles.css`
+
+Defines the web and mobile-control interface styling.
+
+### `cfg.js`
+
+Describes the locally supplied `data.data` payload.
+
+### `_framework/`
+
+Contains the threaded .NET WebAssembly runtime.
+
+### `celeste/`
+
+Contains locally supplied Celeste and Everest runtime assemblies.
+
+### `Mods/`
+
+Contains Everest mods included in the local build.
+
+---
+
+# Split-WASM Streaming
+
+Some `dotnet.native.*.wasm` binaries are too large to be conveniently packaged as single Android assets.
+
+The post-processing system divides them into numbered chunks:
+
+```text
+dotnet.native.example.wasm0
+dotnet.native.example.wasm1
+dotnet.native.example.wasm2
+dotnet.native.example.wasm3
+dotnet.native.example.wasm4
+```
+
+When GeckoView requests:
+
+```text
+dotnet.native.example.wasm
+```
+
+`LocalAssetServer` discovers the numbered parts and streams them sequentially as one:
+
+```text
+Content-Type: application/wasm
+```
+
+response.
+
+To GeckoView and the .NET runtime, the result behaves like the original single WASM file.
+
+---
+
+# Persistence
+
+The runtime intentionally keeps `/libsdl` memory-backed.
+
+Persisting the complete runtime tree through OPFS caused GeckoView to hang during initialization, so persistent data is handled explicitly instead.
+
+```text
+Celeste runtime filesystem
+          │
+          ▼
+   Selected save/mod data
+          │
+          ▼
+      IndexedDB
+          │
+          ▼
+   Application restart
+          │
+          ▼
+Restore into runtime filesystem
+```
+
+This approach persists the data users actually need without forcing the entire game runtime into browser-backed persistent storage.
+
+---
+
+# Mobile / JavaScript Bridge
+
+The web runtime exposes a set of:
+
+```javascript
+window.celesteAndroid...
+```
+
+functions that can be called by the Everest-side mobile integration.
+
+The bridge provides access to services including:
+
+- Haptic feedback
+- Save manager
+- File manager
+- Mod browser
+- Touch-layout editor
+- URL handling
+- Game-data reset
+- Option synchronization
+- Touch coordinates
+- Pointer input
+- Tap input
+- Scroll input
+
+Conceptually:
+
+```text
+Celeste / Everest
+       │
+       ▼
+.NET JavaScript Interop
+       │
+       ▼
+window.celesteAndroid...
+       │
+       ├──► Touch UI
+       ├──► Haptics
+       ├──► Storage
+       ├──► Save Manager
+       ├──► File Manager
+       └──► Mod Browser
+```
+
+Bridge calls are designed to fail gracefully when the Android-specific JavaScript environment is unavailable.
+
+---
+
+# Modular Everest Components
+
+The mobile functionality is being separated into smaller Everest modules instead of remaining one monolithic Android-specific mod.
+
+## MouseUI
+
+Generic mouse and pointer support for Celeste's UI.
+
+Planned responsibilities include:
+
+- Mouse-based menu navigation
+- Clicking UI elements
+- Pointer hover handling
+- Scroll-wheel support
+- Virtual pointer input for touchscreen platforms
+
+`MouseUI` is intended to be useful independently of the Android port.
+
+## BetterMapEditor
+
+Improved map editing and creation tools.
+
+The goal is to keep map-editing functionality independent from the mobile platform layer so it can also be useful on desktop installations.
+
+## MobileMultiplayer
+
+Mobile-specific multiplayer support.
+
+Planned functionality includes:
+
+- Hosting sessions from mobile
+- Joining sessions from mobile
+- Mobile-friendly connection configuration
+- Mobile-oriented multiplayer UI
+
+## MobileTweaks
+
+Mobile-specific Celeste behavior and quality-of-life improvements.
+
+Examples include:
+
+- Camera centering
+- Mobile menu adjustments
+- Startup behavior
+- Mobile option changes
+- Other gameplay and UI tweaks
+
+## MobileBridge
+
+The low-level communication layer between Everest and the mobile/browser host.
+
+Its responsibility is to expose platform capabilities rather than implement gameplay policy.
+
+Examples include:
+
+- Haptics
+- Pointer information
+- Touch events
+- Platform detection
+- Save manager requests
+- File manager requests
+- Mod-browser requests
+- URL handling
+
+The intended dependency model is roughly:
+
+```text
+                    MouseUI
+                       ▲
+                       │
+                 MobileTweaks
+                       │
+                       ▼
+                  MobileBridge
+                       ▲
+                       │
+               MobileMultiplayer
+
+
+              BetterMapEditor
+                   independent
+```
+
+This keeps reusable features independent while allowing the Android port to combine them into a complete mobile experience.
+
+---
+
+# WASM Loader Rebuild
+
+The threaded loader is based on Mercury Workshop's Celeste WASM work.
+
+After publishing, Android-specific post-processing is performed by:
+
+```text
+scripts/postprocess-framework.sh
+```
+
+The post-processing stage:
+
+- Transfers the main `.canvas` into the threaded runtime path
+- Routes Emscripten main-thread assembly calls through `runMainThreadEmAsm`
+- Raises the runtime ULEB limit
+- Splits large `dotnet.native.*.wasm` binaries into 20 MB chunks
+- Copies the resulting framework into:
+
+```text
+CelesteAndroidApp/assets/www/_framework/
+```
+
+---
+
+# Build Pipeline
+
+A complete local build roughly follows:
+
+```text
+Everest modules
+      │
+      ▼
+Compile C#
+      │
+      ▼
+Package mods
+      │
+      ▼
+Build / prepare threaded WASM runtime
+      │
+      ▼
+Post-process framework
+      │
+      ▼
+Supply legally obtained Celeste game files
+      │
+      ▼
+Gradle Android build
+      │
+      ▼
+APK
+```
+
+---
+
+# Prerequisites
+
+Development may require:
+
+- Android Studio
+- Android SDK
+- Compatible JDK
+- Gradle 8.11.1 through the included wrapper
+- .NET SDK
+- Node.js
+- WSL for rebuilding the WASM runtime
+- A legally obtained copy of Celeste
+
+The repository does not download or distribute commercial Celeste game files.
+
+---
+
+# Building
+
+## 1. Build the Everest Integration
+
+From the repository root:
 
 ```powershell
 dotnet build .\CelesteAndroidPatch\Source\AndroidPort.csproj -c Debug
 ```
 
-Package the mod with the provided script:
+Package it with:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\package-android-port-mod.ps1
 ```
 
-The resulting mod package should be copied to:
+The generated mod package is copied into:
 
 ```text
-CelesteAndroidApp\assets\www\Mods\AndroidPort.zip
+CelesteAndroidApp\assets\www\Mods\
 ```
 
-The package contains:
+---
 
-- `CelesteAndroidPatch\Source\metadata.yaml`
-- `CelesteAndroidPatch\Source\Dialog\`
-- `CelesteAndroidPatch\Source\bin\AndroidPort.dll`
+## 2. Rebuild the Threaded WASM Runtime
 
-### Rebuild the Threaded WASM Loader
-
-Run the following inside WSL from the root of a local Celeste WASM source checkout:
+From a configured WSL environment inside the Celeste WASM source:
 
 ```bash
-export PATH=/home/unlim8ted/.dotnet10:/home/unlim8ted/node16/bin:$PATH
-export DOTNET_ROOT=/home/unlim8ted/.dotnet10
-export DOTNET_ROLL_FORWARD=Major
-export TMPDIR=/mnt/o/celeste/.tmp-wsl
-export DOTNET_CLI_HOME=/mnt/o/celeste/.dotnet-cli-home
-export NUGET_PACKAGES="$PWD/nuget"
-
 dotnet publish loader \
     -c Release \
     --nodereuse:false \
     -v minimal
 ```
 
-After publishing, run the post-processing script from the project root:
+Then run the Android post-processing stage from the repository root:
 
 ```powershell
 wsl.exe -e bash -lc 'cd /mnt/o/celeste; bash scripts/postprocess-framework.sh'
 ```
 
-The post-processed runtime is copied into:
+The generated framework is placed under:
 
 ```text
-CelesteAndroidApp\assets\www\_framework
+CelesteAndroidApp/assets/www/_framework/
 ```
 
-### Build the Android APK
+---
 
-Enter the Android Gradle project:
+## 3. Build the Android APK
+
+Enter the Android project:
 
 ```powershell
-cd O:\celeste\CelesteAndroidApp
+cd .\CelesteAndroidApp
 ```
 
-Confirm that the Gradle wrapper is using Gradle 8.11.1:
+Verify the Gradle wrapper:
 
 ```powershell
 .\gradlew.bat --version
 ```
 
-Build the debug APK:
+Expected version:
+
+```text
+Gradle 8.11.1
+```
+
+Build:
 
 ```powershell
 .\gradlew.bat --no-daemon :app:assembleDebug
 ```
 
-Copy the APK to the workspace root:
+The debug APK is generated at:
+
+```text
+CelesteAndroidApp\app\build\outputs\apk\debug\app-debug.apk
+```
+
+Copy it to the repository root if desired:
 
 ```powershell
 Copy-Item `
     .\app\build\outputs\apk\debug\app-debug.apk `
-    ..\celeste-fixed.apk `
+    ..\celeste-debug.apk `
     -Force
 ```
 
-The final APK will be located at:
-
-```text
-O:\celeste\celeste-fixed.apk
-```
-
-The complete build can also be run through the helper script:
+The complete build can also be run through:
 
 ```powershell
-cd O:\celeste
+cd ..
 powershell -ExecutionPolicy Bypass -File .\scripts\build-apk.ps1
 ```
 
-## Testing
+---
 
-Install or update the APK:
+# Testing
 
-```powershell
-cd O:\celeste
-adb.exe install -r .\celeste-fixed.apk
-```
-
-Launch the application:
+Install or update the development APK:
 
 ```powershell
-adb.exe shell am start -n com.unlim8ted.celeste/.MainActivity
+adb install -r .\celeste-debug.apk
 ```
 
-View the most useful log output:
+Launch it:
 
 ```powershell
-adb.exe logcat CelesteAssetServer:D GeckoConsole:D GeckoRuntime:D AndroidRuntime:E *:S
+adb shell am start -n com.unlim8ted.celeste/.MainActivity
 ```
 
-To clear existing logs before launching:
+## Logcat
+
+Useful runtime logging:
 
 ```powershell
-adb.exe logcat -c
-adb.exe shell am start -n lucyyuih.celeste.wasm/com.unlim8ted.celeste.MainActivity
-adb.exe logcat CelesteAssetServer:D GeckoConsole:D GeckoRuntime:D AndroidRuntime:E *:S
+adb logcat CelesteAssetServer:D GeckoConsole:D GeckoRuntime:D AndroidRuntime:E *:S
 ```
 
-License and Attribution
+For a clean test:
 
-This is an unofficial community project created by Unlim8ted Studios.
+```powershell
+adb logcat -c
+adb shell am start -n com.unlim8ted.celeste/.MainActivity
+adb logcat CelesteAssetServer:D GeckoConsole:D GeckoRuntime:D AndroidRuntime:E *:S
+```
 
-Original Android integration code and other original contributions by Unlim8ted Studios are shared as part of this project. Contributions, issue reports, and improvements are welcome.
+---
 
-This project builds upon or interfaces with Celeste WASM/Webleste, Everest, GeckoView, and other third-party software. Those components remain subject to their respective licenses and copyright notices.
+# Current Development Priorities
 
-Celeste and its associated intellectual property belong to their respective rights holders. Commercial Celeste game data, including "data.data", is not included and must be supplied from a legally obtained copy of the game.
+The main areas currently being worked on are:
 
-This project is not affiliated with or endorsed by Extremely OK Games.
+1. **Everest compatibility**
+   - Complete support for the modified threaded Everest runtime.
+
+2. **Touch UI**
+   - Extend pointer/touch interaction across all Celeste menus.
+
+3. **Modularization**
+   - Split the current Android-specific Everest functionality into `MouseUI`, `MobileBridge`, `MobileTweaks`, `MobileMultiplayer`, and related independent modules.
+
+4. **Multiplayer**
+   - Host sessions directly from Android.
+   - Join sessions directly from Android.
+   - Build a mobile-friendly session interface.
+
+5. **Map editing**
+   - Develop the standalone `BetterMapEditor` functionality.
+
+6. **Mod ecosystem**
+   - Continue improving browsing, installation, persistence, and management of Everest mods on mobile.
+
+---
+
+# Credits
+
+This project would not exist without the work of several projects and communities.
+
+### Unlim8ted Studios
+
+Android port, mobile integration, UI, platform bridge, and project-specific development.
+
+https://unlim8ted.com
+
+### Mercury Workshop
+
+Webleste / Celeste WASM, which provides the WebAssembly foundation used by this project.
+
+https://github.com/MercuryWorkshop/celeste-wasm
+
+### LucyYuih
+
+Prior Android Celeste WASM work used as part of the Android-port foundation.
+
+https://gamejolt.com/games/CelesteWASMAndroid/1043072
+
+
+### Extremely OK Games
+
+Creators and rights holders of Celeste.
+
+---
+
+# License & Attribution
+
+This is an unofficial community project created by **Unlim8ted Studios**.
+
+Original Android integration code and other original contributions by Unlim8ted Studios are shared publicly as part of this project. Contributions, testing, issue reports, and improvements are welcome.
+
+This project builds upon or interfaces with third-party software including:
+
+- Celeste WASM / Webleste
+- Everest
+- GeckoView
+- Prior Android Celeste WASM work
+
+Third-party components remain subject to their respective copyright notices and licenses.
+
+**Celeste and its associated names, characters, artwork, audio, game code, and other intellectual property belong to their respective rights holders.**
+
+Commercial Celeste game data, including `data.data`, is **not included** in this repository and must be supplied from a legally obtained copy of Celeste.
+
+This project is not affiliated with, sponsored by, or endorsed by Extremely OK Games.
+
+---
+
+<div align="center">
+
+### Made with ❤️,
+**Unlim8ted Studios**
+
+</div>
