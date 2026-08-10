@@ -4567,6 +4567,8 @@ var getConfig;
 var runtime;
 var loaderExports;
 var initted = false;
+var celesteBootstrapMounted = false;
+var hideIntroSplash = null;
 const XXH64_MASK = (1n << 64n) - 1n;
 const XXH64_PRIME1 = 11400714785074694791n;
 const XXH64_PRIME2 = 14029467366897019727n;
@@ -4657,6 +4659,9 @@ function xxh64File(path) {
 function bootStatus(message) {
   const text = "Initializing: " + message;
   console.warn("[android-port] " + message);
+  if (typeof window.celesteSetBootStatus === "function") {
+    window.celesteSetBootStatus(text, message);
+  }
   const progressSteps = {
     "creating dotnet runtime": 8,
     "runtime created": 14,
@@ -4668,6 +4673,9 @@ function bootStatus(message) {
     "installing bundled mod": 78,
     "patching Everest": 86,
     "preinitializing Celeste": 94,
+    "ready to start game": 95,
+    "initializing Everest": 96,
+    "starting game": 98,
     "complete": 100
   };
   const progress = document.getElementById("progress");
@@ -4711,7 +4719,14 @@ async function initOnce() {
   try {
     runtime = await dotnet.withConfig({
       pthreadPoolInitialSize: 8,
-      maxParallelDownloads: 8
+      maxParallelDownloads: 8,
+      disableIntegrityCheck: true,
+      environmentVariables: {
+        FNA_PLATFORM_BACKEND: "SDL3",
+        MONOMOD_DEPENDENCY_REMOVE_PATCH: "0",
+        MONOMOD_WASM_ENABLE_MAGIC_OVERWRITE: "0",
+        DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+      }
     }).withRuntimeOptions([
       "--jiterpreter-minimum-trace-hit-count=500",
       "--jiterpreter-trace-monitoring-period=100",
@@ -4736,6 +4751,13 @@ async function initOnce() {
   getConfig = runtime.getConfig.bind(runtime);
   setModuleImports = runtime.setModuleImports.bind(runtime);
   const FS = runtime.Module.FS;
+  if (!runtime.Module.ENV) runtime.Module.ENV = {};
+  Object.assign(runtime.Module.ENV, {
+    FNA_PLATFORM_BACKEND: "SDL3",
+    MONOMOD_DEPENDENCY_REMOVE_PATCH: "0",
+    MONOMOD_WASM_ENABLE_MAGIC_OVERWRITE: "0",
+    DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+  });
   bootStatus("runtime created");
   window.FS = FS;
   setModuleImports("SteamJS", {
@@ -4797,9 +4819,17 @@ async function initOnce() {
   bootStatus("loading exports");
   loaderExports = await getAssemblyExports(config.mainAssemblyName);
   const loc = location.pathname;
+  const runtimeRoot = loc.substring(0, loc.lastIndexOf("/") + 1);
+  if (loaderExports.CelesteBootstrap && loaderExports.CelesteBootstrap.MountFilesystems) {
+    bootStatus("mounting Celeste filesystems");
+    console.info("[android-port] Calling CelesteBootstrap.MountFilesystems()...");
+    await loaderExports.CelesteBootstrap.MountFilesystems(runtimeRoot, dlls);
+    celesteBootstrapMounted = true;
+    console.info("[android-port] CelesteBootstrap.MountFilesystems returned");
+  }
   bootStatus("mounting filesystems");
   await setupRuntimeFilesystems(
-    loc.substring(0, loc.lastIndexOf("/") + 1),
+    runtimeRoot,
     dlls
   );
   window.celesteDataRoot = "/libsdl/Content";
@@ -4834,7 +4864,7 @@ async function initOnce() {
   }
 
   initted = true;
-  bootStatus("complete");
+  bootStatus("ready to start game");
 }
 var ts = performance.now();
 var fps;
@@ -4900,11 +4930,12 @@ async function start(canvas) {
       ...everestDlls.map(d => `${d}|${d}`)
     ];
 
-    if (loaderExports.CelesteBootstrap && loaderExports.CelesteBootstrap.MountFilesystems) {
+    if (!celesteBootstrapMounted && loaderExports.CelesteBootstrap && loaderExports.CelesteBootstrap.MountFilesystems) {
       console.info("[android-port] Calling CelesteBootstrap.MountFilesystems()...");
       try {
-        // Using "/libsdl" as the root where game files actually reside
-        await loaderExports.CelesteBootstrap.MountFilesystems("/libsdl", allDlls);
+        const loc = location.pathname;
+        await loaderExports.CelesteBootstrap.MountFilesystems(loc.substring(0, loc.lastIndexOf("/") + 1), window.celesteDlls || allDlls);
+        celesteBootstrapMounted = true;
         console.info("[android-port] MountFilesystems successful");
       } catch (err) {
         if (String(err).includes("-20")) {
@@ -4916,15 +4947,23 @@ async function start(canvas) {
     }
 
     if (loaderExports.Patcher && loaderExports.Patcher.PatchCeleste) {
-      console.info("[android-port] Calling Patcher.PatchCeleste(false)...");
       try {
-        await loaderExports.Patcher.PatchCeleste(false);
+        console.info("[android-port] preloading Celeste.Wasm.mm assembly for MonoMod rules");
+        await getAssemblyExports("Celeste.Wasm.mm");
+      } catch (preloadErr) {
+        console.warn("[android-port] Celeste.Wasm.mm preload had no exports or failed; continuing: " + preloadErr);
+      }
+      console.info("[android-port] Calling Patcher.PatchCeleste(false) for already-Everest runtime...");
+      try {
+        const patched = await loaderExports.Patcher.PatchCeleste(false);
+        if (!patched) throw new Error("Patcher.PatchCeleste(false) returned false");
         console.info("[android-port] PatchCeleste successful");
       } catch (patchErr) {
-        console.warn("[android-port] PatchCeleste failed (might already be patched): " + patchErr);
+        console.error("[android-port] PatchCeleste failed: " + patchErr);
+        throw patchErr;
       }
     } else {
-      console.warn("[android-port] Patcher.PatchCeleste is unavailable; continuing with seeded runtime");
+      throw new Error("Patcher.PatchCeleste is unavailable");
     }
     try {
       const rootEntries = FS.readdir("/libsdl").filter((n) => n !== "." && n !== "..").join(", ");
@@ -4937,6 +4976,7 @@ async function start(canvas) {
       console.warn("[android-port] failed to dump VFS before init", dumpErr);
     }
 
+    bootStatus("initializing Everest");
     console.info("[android-port] Initializing CelesteLoader...");
     try {
       await loaderExports.CelesteLoader.Init(false);
@@ -4947,11 +4987,13 @@ async function start(canvas) {
       throw initErr;
     }
 
+    bootStatus("starting game");
     for (let i = 0; i < 5; i++) {
       if (!await loaderExports.CelesteLoader.RunOneFrame()) {
         throw new Error("Celeste exited during startup");
       }
     }
+    if (hideIntroSplash) hideIntroSplash();
     localStorage["celeste_first_run_complete"] = "true";
     startPersistenceLoop();
     await loaderExports.CelesteLoader.MainLoop();
@@ -5004,6 +5046,10 @@ async function setupRuntimeFilesystems(root, rawDlls) {
   createSymlinkIfMissing("/Content", "/libsdl/Content");
   createSymlinkIfMissing("/Saves", "/libsdl/Celeste/Saves");
   createSymlinkIfMissing("/remote/%GameInstall%Saves", "/libsdl/Celeste/Saves");
+  if (celesteBootstrapMounted) {
+    console.info("[android-port] framework assemblies mounted by CelesteBootstrap; skipping JS /bin staging");
+    return;
+  }
   const base = new URL(root + "_framework/", location.href);
   let copied = 0;
   for (const raw of rawDlls) {
@@ -5375,8 +5421,9 @@ async function installBundledMods() {
   if (!dotnet.instance || !dotnet.instance.Module) await init();
   const FS = dotnet.instance.Module.FS;
   const bundledMods = [
-    "AndroidPort.zip",
-    "MobileBridge.zip"
+    "MobileBridge.zip",
+    "MobileTweaks.zip",
+    "MouseUI.zip"
   ];
   try {
     mkdirp("/libsdl/Celeste/Mods");
@@ -5917,6 +5964,17 @@ function IntroSplash() {
 			border-radius: 0.5em;
 		}
 
+		#boot-status-label {
+			display: block;
+			min-height: 1.4em;
+			margin: 0 0 0.75em;
+			color: #fff;
+			font-size: 1rem;
+			font-weight: 600;
+			text-align: center;
+			text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+		}
+
 		#progress {
 			transition: width 0.2s ease;
 			height: 0.5em;
@@ -5959,6 +6017,28 @@ function IntroSplash() {
   this.downloaded = !DRM;
   this.showprogress = true;
   this.status = "Loading game data";
+  window.celesteSetBootStatus = (text, message) => {
+    this.status = text || message || this.status;
+    const progressSteps = {
+      "creating dotnet runtime": 8,
+      "runtime created": 14,
+      "starting .NET": 22,
+      "loading exports": 32,
+      "mounting Celeste filesystems": 38,
+      "mounting filesystems": 42,
+      "installing game data": 55,
+      "seeding runtime": 68,
+      "restoring saves and mods": 73,
+      "installing bundled mod": 78,
+      "patching Everest": 86,
+      "preinitializing Celeste": 94,
+      "ready to start game": 95,
+      "initializing Everest": 96,
+      "starting game": 98,
+      "complete": 100
+    };
+    if (progressSteps[message] !== void 0) this.progress = progressSteps[message];
+  };
   if (window.SINGLEFILE) {
     this.downloaded = true;
     this.downloading = true;
@@ -6062,8 +6142,11 @@ function IntroSplash() {
       }
     });
     await prepareMaintenance();
-    this.root.addEventListener("animationend", this.root.remove);
-    this.root.style.animation = "fadeout 0.5s ease";
+    hideIntroSplash = () => {
+      if (!this.root || !this.root.parentNode) return;
+      this.root.addEventListener("animationend", this.root.remove);
+      this.root.style.animation = "fadeout 0.5s ease";
+    };
   };
   let openModManager = async () => {
     await prepareMaintenance();

@@ -32,7 +32,7 @@
 #
 #   everest.yaml
 #   MobileBridge.dll
-#   Dialog/...
+#   Dialogue/...
 #   Graphics/...
 #   etc.
 
@@ -59,6 +59,7 @@ $ContentDirectories = @(
     "Audio",
     "Content",
     "Dialog",
+    "Dialogue",
     "Graphics",
     "Loenn",
     "Maps",
@@ -110,7 +111,7 @@ function Get-ManifestDllName {
         ".dll",
         [System.StringComparison]::OrdinalIgnoreCase
     )) {
-        throw "DLL entry is not a .dll filename in $YamlPath: $dll"
+        throw "DLL entry is not a .dll filename in ${YamlPath}: $dll"
     }
 
     return $dll

@@ -213,6 +213,9 @@ final class LocalAssetServer {
         while (path2.startsWith("/")) {
             path2 = path2.substring(1);
         }
+        while (path2.contains("//")) {
+            path2 = path2.replace("//", "/");
+        }
         if (path2.contains("..") || path2.contains("\\") || path2.startsWith(".")) {
             return "__invalid__";
         }
