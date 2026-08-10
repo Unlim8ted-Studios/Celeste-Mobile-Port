@@ -6,7 +6,9 @@ An unofficial mobile port focused on bringing a complete, mod-capable Celeste ex
 
 Developed by "Unlim8ted Studios" (https://unlim8ted.com)
 
-</div>---
+</div>
+
+---
 
 > [!IMPORTANT]
 Celeste game files are not distributed with this repository.
