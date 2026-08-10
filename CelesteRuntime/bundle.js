@@ -4915,7 +4915,17 @@ async function start(canvas) {
       }
     }
 
-    console.info("[android-port] Runtime patch call skipped; using seeded CustomCeleste.dll");
+    if (loaderExports.Patcher && loaderExports.Patcher.PatchCeleste) {
+      console.info("[android-port] Calling Patcher.PatchCeleste(false)...");
+      try {
+        await loaderExports.Patcher.PatchCeleste(false);
+        console.info("[android-port] PatchCeleste successful");
+      } catch (patchErr) {
+        console.warn("[android-port] PatchCeleste failed (might already be patched): " + patchErr);
+      }
+    } else {
+      console.warn("[android-port] Patcher.PatchCeleste is unavailable; continuing with seeded runtime");
+    }
     try {
       const rootEntries = FS.readdir("/libsdl").filter((n) => n !== "." && n !== "..").join(", ");
       const modEntries = FS.readdir("/libsdl/Celeste/Mods").filter((n) => n !== "." && n !== "..").join(", ");
@@ -5266,7 +5276,7 @@ function startPersistenceLoop() {
 }
 async function ensureEverestPatched() {
   const FS = dotnet.instance.Module.FS;
-  console.warn("Runtime patching is disabled for this build; launching seeded Celeste.dll directly");
+  console.info("[android-port] preparing CustomCeleste.dll before Everest patching");
   if (runtimeFileExists(FS, "/libsdl/CustomCeleste.dll")) {
     FS.unlink("/libsdl/CustomCeleste.dll");
   }
@@ -6092,15 +6102,19 @@ function IntroSplash() {
       console.error("Auto-start failed", err);
     }
   }, 250);
-  return /* @__PURE__ */ h("main", { class: [use(store.theme)] }, /* @__PURE__ */ h("div", { class: "mountain" }), /* @__PURE__ */ h("div", { id: "opaque" }), /* @__PURE__ */ h("div", { id: "blur" }), /* @__PURE__ */ h("div", { class: "info" }, /* @__PURE__ */ h("div", { class: "inner" }, /* @__PURE__ */ h("p", { style: { display: "none" } }, "V53"), $if(
+  const progressContent = $if(
     use(this.downloading),
-    $if(use(this.showprogress), /* @__PURE__ */ h("div", null, /* @__PURE__ */ h("p", { id: "boot-status-label" }, use(this.status)), /* @__PURE__ */ h("div", { id: "bar" }, /* @__PURE__ */ h("div", {
-      id: "progress", style: {
-        width: use`${this.progress}%`
-      }
-    })))),
+    $if(
+      use(this.showprogress),
+      /* @__PURE__ */ h("div", null, /* @__PURE__ */ h("p", { id: "boot-status-label" }, use(this.status)), /* @__PURE__ */ h("div", { id: "bar" }, /* @__PURE__ */ h("div", {
+        id: "progress",
+        style: { width: use`${this.progress}%` }
+      })))
+    ),
     /* @__PURE__ */ h("div", null, /* @__PURE__ */ h("p", { id: "boot-status-label" }, use(this.status)), /* @__PURE__ */ h("div", { id: "bar" }, /* @__PURE__ */ h("div", { id: "progress", style: { width: "0%" } })))
-  ), $if(hasBootedBefore, /* @__PURE__ */ h("div", { class: "boot-actions" }, /* @__PURE__ */ h("button", { class: "action", "on:click": openModManager }, /* @__PURE__ */ h("span", { class: "label" }, "Open Mod Manager")), /* @__PURE__ */ h("button", { class: "action", "on:click": exportSave }, /* @__PURE__ */ h("span", { class: "label" }, "Export Save")), /* @__PURE__ */ h("button", { class: "action", "on:click": loadSave }, /* @__PURE__ */ h("span", { class: "label" }, "Load Save")), /* @__PURE__ */ h("button", { class: "action danger", "on:click": resetGame }, /* @__PURE__ */ h("span", { class: "label" }, "Reset Game"))))));
+  );
+  const bootActions = hasBootedBefore ? /* @__PURE__ */ h("div", { class: "boot-actions" }, /* @__PURE__ */ h("button", { class: "action", "on:click": openModManager }, /* @__PURE__ */ h("span", { class: "label" }, "Open Mod Manager")), /* @__PURE__ */ h("button", { class: "action", "on:click": exportSave }, /* @__PURE__ */ h("span", { class: "label" }, "Export Save")), /* @__PURE__ */ h("button", { class: "action", "on:click": loadSave }, /* @__PURE__ */ h("span", { class: "label" }, "Load Save")), /* @__PURE__ */ h("button", { class: "action danger", "on:click": resetGame }, /* @__PURE__ */ h("span", { class: "label" }, "Reset Game"))) : "";
+  return /* @__PURE__ */ h("main", { class: [use(store.theme)] }, /* @__PURE__ */ h("div", { class: "mountain" }), /* @__PURE__ */ h("div", { id: "opaque" }), /* @__PURE__ */ h("div", { id: "blur" }), /* @__PURE__ */ h("div", { class: "info" }, /* @__PURE__ */ h("div", { class: "inner" }, /* @__PURE__ */ h("p", { style: { display: "none" } }, "V53"), progressContent, bootActions)));
 }
 var app;
 async function loadfrontend() {
