@@ -391,12 +391,9 @@ public sealed class MouseUIModule : EverestModule {
         }
 
         Vector2 pointer = PointerPosition();
+        bool tapped = ConsumePointerTap();
 
-        if (!ConsumePointerTap()) {
-            return;
-        }
-
-        if (IsBackButton(pointer)) {
+        if (tapped && IsBackButton(pointer)) {
             if (fileSelect.Overworld.Next == null) {
                 if (fileSelect.SlotSelected) {
                     fileSelect.UnselectHighlighted();
@@ -408,6 +405,10 @@ public sealed class MouseUIModule : EverestModule {
         }
 
         if (!fileSelect.SlotSelected) {
+            if (!tapped) {
+                return;
+            }
+
             for (int i = 0; i < fileSelect.Slots.Length; i++) {
                 OuiFileSelectSlot slot = fileSelect.Slots[i];
                 if (slot == null || !slot.Visible) {
@@ -482,7 +483,7 @@ public sealed class MouseUIModule : EverestModule {
                 if (buttonIndex != i) {
                     buttonIndexField.SetValue(selectedSlot, i);
                     Audio.Play("event:/ui/main/rollover_down");
-                } else if (actionField.GetValue(button) is Action action) {
+                } else if (tapped && actionField.GetValue(button) is Action action) {
                     action();
                 }
                 return;
@@ -774,13 +775,17 @@ public sealed class MouseUIModule : EverestModule {
             return;
         }
 
-        orig(menu);
-
         Vector2 pointer = PointerPosition();
         if (IsBackButton(pointer) && ConsumePointerTap()) {
-            menu?.OnCancel?.Invoke();
+            BackOutOfTextMenu(menu);
             return;
         }
+
+        if (menu != null) {
+            menu.AutoScroll = false;
+        }
+
+        orig(menu);
 
         if (menu == null || !menu.Focused || menu.Items == null || menu.Items.Count == 0) {
             if (ReferenceEquals(hoveredTextMenu, menu)) {
@@ -795,6 +800,22 @@ public sealed class MouseUIModule : EverestModule {
         Vector2 origin = menu.Position - menu.Justify * new Vector2(menu.Width, menu.Height);
         hoveredTextMenu = menu;
         hoveredTextMenuItem = FindHoveredTextMenuItem(menu, pointer, origin);
+        menu.AutoScroll = false;
+
+        if (hoveredTextMenuItem >= 0 &&
+            hoveredTextMenuItem < menu.Items.Count) {
+
+            TextMenu.Item hovered = menu.Items[hoveredTextMenuItem];
+            if (hovered != null &&
+                hovered.Visible &&
+                hovered.Hoverable &&
+                menu.Selection != hoveredTextMenuItem) {
+
+                menu.Current?.OnLeave?.Invoke();
+                menu.Selection = hoveredTextMenuItem;
+                hovered.OnEnter?.Invoke();
+            }
+        }
 
         float scroll = ConsumePointerScroll();
         if (UsingTouch) {
@@ -929,6 +950,26 @@ public sealed class MouseUIModule : EverestModule {
         return Calc.Clamp(offset, min, 0f);
     }
 
+    private static void BackOutOfTextMenu(
+        TextMenu menu) {
+
+        if (menu == null) {
+            return;
+        }
+
+        if (menu.OnCancel != null) {
+            try {
+                menu.OnCancel.Invoke();
+                return;
+            } catch {
+            }
+        }
+
+        if (menu.Scene is Overworld overworld) {
+            overworld.Goto<OuiMainMenu>();
+        }
+    }
+
     private static void OnTextMenuRender(
         On.Celeste.TextMenu.orig_Render orig,
         TextMenu menu) {
@@ -944,26 +985,18 @@ public sealed class MouseUIModule : EverestModule {
 
         textMenuScrollOffsets.TryGetValue(menu, out float offset);
         Vector2 originalPosition = menu.Position;
-        int originalSelection = menu.Selection;
         bool originalAutoScroll = menu.AutoScroll;
 
         if (Math.Abs(offset) > 0.01f) {
             menu.Position = originalPosition + new Vector2(0f, offset);
         }
 
-        if (ReferenceEquals(menu, hoveredTextMenu) &&
-            hoveredTextMenuItem >= 0 &&
-            hoveredTextMenuItem < menu.Items.Count) {
-
-            menu.Selection = hoveredTextMenuItem;
-            menu.AutoScroll = false;
-        }
+        menu.AutoScroll = false;
 
         try {
             orig(menu);
         } finally {
             menu.Position = originalPosition;
-            menu.Selection = originalSelection;
             menu.AutoScroll = originalAutoScroll;
         }
     }

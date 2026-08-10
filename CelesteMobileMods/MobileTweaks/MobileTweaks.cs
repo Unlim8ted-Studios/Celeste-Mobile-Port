@@ -119,6 +119,12 @@ public sealed class MobileTweaksModule : EverestModule {
         EventInstance snapshot) {
 
         TextMenu options = orig(inGame, snapshot);
+        RemoveOptionButton(
+            options,
+            "OPTIONS_KEYCONFIG");
+        RemoveOptionButton(
+            options,
+            "OPTIONS_BTNCONFIG");
 
         // In the embedded browser wrapper, fullscreen is not a user-facing
         // choice. Enforce windowed rendering and physically remove the vanilla
@@ -209,6 +215,26 @@ public sealed class MobileTweaksModule : EverestModule {
         }
 
         return options;
+    }
+
+    private static void RemoveOptionButton(
+        TextMenu menu,
+        string dialogKey) {
+
+        string label =
+            Dialog.Clean(dialogKey);
+
+        TextMenu.Item item =
+            menu.Items.FirstOrDefault(candidate =>
+                candidate is TextMenu.Button button &&
+                string.Equals(
+                    button.Label,
+                    label,
+                    StringComparison.OrdinalIgnoreCase));
+
+        if (item != null) {
+            menu.Remove(item);
+        }
     }
 
     private void OnMainMenuUpdate(
