@@ -716,7 +716,7 @@ Responsibilities include:
 - Clickable `GO BACK` behavior
 - Optional touch input supplied through `MobileBridge`
 
-`MouseUI` does not require `MobileBridge` for desktop mouse functionality.
+`MouseUI` does not require `MobileBridge` for desktop mouse functionality. It can be used seperately [here](https://gamebanana.com/mods/702624).
 
 If `MobileBridge` is present, touch is automatically treated as an additional pointer source.
 
