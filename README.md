@@ -1,412 +1,558 @@
-<div align="center">
+<div align="center">Celeste Mobile Port
 
-# Celeste Android WASM Port
+Celeste + Everest on mobile, powered by threaded .NET WebAssembly and platform-specific wrappers
 
-### Celeste + Everest on Android, powered by threaded .NET WebAssembly and GeckoView
+An unofficial mobile port focused on bringing a complete, mod-capable Celeste experience to phones and tablets with customizable touch controls, haptics, save management, multiplayer, map creation, and mobile-specific UI improvements.
 
-An unofficial Android port focused on bringing a complete, mod-capable Celeste experience to mobile with customizable touch controls, haptics, save management, multiplayer support, and mobile-specific improvements.
+Developed by "Unlim8ted Studios" (https://unlim8ted.com)
 
-**Developed by [Unlim8ted Studios](https://unlim8ted.com)**
+</div>---
 
-</div>
+«[!IMPORTANT]
+Celeste game files are not distributed with this repository.
+Building a playable copy requires files from a legally obtained copy of Celeste.»
 
----
+«[!NOTE]
+Project status: Active development.
+The threaded Celeste/Everest WebAssembly runtime, Android GeckoView host, touch-control system, save/mod persistence, and modular mobile integration are functional. Multiplayer hosting, the simplified in-game map editor, iOS support, and some modified-Everest compatibility work are still under active development.»
 
-> [!IMPORTANT]
-> **Celeste game files are not distributed with this repository.**  
-> Building a playable copy requires files from a legally obtained copy of Celeste.
+Overview
 
-> [!NOTE]
-> **Project status: Active development.**  
-> The Android host, threaded WASM runtime, touch interface, and supporting infrastructure are functional. Work is ongoing to complete compatibility with the modified Everest runtime and finish several mobile-specific features.
+Celeste Mobile Port runs Celeste and Everest inside a threaded .NET WebAssembly environment and surrounds that runtime with a comparatively small platform-specific host.
 
-## Overview
+The Android version currently uses Mozilla GeckoView as its embedded browser engine.
 
-Celeste Android WASM Port runs the threaded Celeste/Everest WebAssembly runtime inside an embedded **GeckoView** browser engine.
+Rather than attempting to rewrite Celeste as native Android or iOS game code, the project keeps nearly all game logic, Everest, mods, and FNA-compatible runtime behavior inside the shared WASM environment.
 
-Rather than attempting to rewrite Celeste as native Android game code, the project keeps nearly all of the existing game and Everest runtime inside .NET WebAssembly. A relatively small Android host provides the platform-specific functionality needed for mobile, including:
+Platform wrappers provide the functionality that actually needs to be native, including:
 
 - Touch controls
 - Haptics
-- Storage and save persistence
-- File management
+- Save import/export
+- File access
 - Mod management
-- Mobile UI integration
-- Multiplayer hosting and joining
-- Android lifecycle and fullscreen behavior
+- Multiplayer host services
+- Platform lifecycle handling
+- Native browser/runtime integration
+- Platform-specific fullscreen and display behavior
 
-The web runtime is packaged under:
+The architecture is intentionally split into four major parts:
 
-```text
-CelesteAndroidApp/assets/www/
-```
+Celeste-Mobile-Port/
+│
+├── AndroidWrapper/
+├── IOSWrapper/
+├── Celeste/
+└── CelesteMobileMods/
 
-and served to GeckoView through a local HTTP server with the cross-origin isolation headers required for threaded WebAssembly and `SharedArrayBuffer`.
+This keeps the game runtime largely platform-independent.
 
-This architecture keeps the actual game runtime largely platform-independent while allowing Android-specific functionality to be built around it.
+The goal is for Android and iOS to share the same Celeste/Everest runtime and mobile mods while replacing only the native wrapper layer.
 
 ---
 
-## Features
+Features
 
-### 🎮 Touch Controls
+🎮 Touch Controls
 
 - [x] Fully customizable touchscreen controls
 - [x] Drag, resize, and reposition gameplay controls
-- [x] Save and restore multiple control-layout presets
+- [x] Save and restore control layouts
 - [x] Built-in default mobile layout
+- [x] Joystick movement mode
+- [x] Arrow-button movement mode
 - [x] Optional 8-way joystick snapping
-- [x] Matching visual feedback for joystick snapping
-- [x] Configure touch controls directly from Celeste's Options menu
-- [x] Complete touch support across every game UI
+- [x] Matching joystick snapping behavior
+- [x] In-game control layout editor
+- [x] Touch interaction with Celeste menus through "MouseUI"
+- [x] Mouse support independent of the mobile platform
+- [x] Touch support automatically enabled when "MobileBridge" is available
 
-### 📱 Mobile Improvements
+📱 Mobile Improvements
 
-- [x] Optional mobile camera-centering mode
+- [x] Optional player-centered camera mode
 - [x] Camera centering respects room boundaries
-- [x] Camera centering automatically avoids interfering with cutscenes
-- [x] Mobile-specific menu behavior
-- [x] Android-specific quality-of-life improvements
-- [x] Mobile-friendly startup behavior
-- [x] Android-owned fullscreen handling
+- [x] Camera centering avoids cutscenes and transitions
+- [x] Mobile-specific menu organization
+- [x] Mobile-friendly main menu
+- [x] Mobile-friendly Options integration
+- [x] Skip the normal introductory startup flow
+- [x] Automatically enter the main menu
+- [x] Hide browser-inappropriate settings such as Fullscreen
+- [x] Move mobile settings out of Everest Mod Options and into normal Celeste Options
+- [x] Preserve normal Mod Options for unrelated third-party mods
+- [x] Move overflowing main-menu additions into columns to the right
 
-### 📳 Haptics
+📳 Haptics
 
-- [x] Android haptic feedback
+- [x] Native mobile haptic feedback
 - [x] Uses Celeste's existing rumble events
-- [x] User-configurable haptic behavior
-- [x] JavaScript-to-Android haptic bridge
+- [x] User-configurable haptics
+- [x] JavaScript/native bridge
+- [x] Configurable directly from Celeste's normal Options menu
 
-### 💾 Saves & Files
+💾 Saves & Files
 
-- [x] Save persistence
-- [x] IndexedDB-backed save snapshots
+- [x] Persistent saves
+- [x] IndexedDB-backed runtime persistence
 - [x] Save manager
+- [x] Save export
+- [x] Save import
 - [x] File manager
-- [x] Game-data reset functionality
+- [x] Mod persistence
 - [x] Restore persistent data during runtime initialization
 
-### 🧩 Mods & Everest
+🧩 Mods & Everest
 
 - [x] Everest mod support
 - [x] Built-in mod browser
-- [x] Mod installer
+- [x] Mod installation
 - [x] Mod persistence
-- [x] Android-specific Everest integration
-- [ ] Complete compatibility with the modified Everest runtime
+- [x] Mobile-specific Everest integration
+- [x] Modular mobile Everest components
+- [x] Third-party Mod Options remain available normally
+- [ ] Complete compatibility with every modified Everest/runtime feature
 
-### 🌐 Multiplayer
+🌐 Multiplayer
 
-- [ ] Host multiplayer sessions directly from mobile
-- [ ] Join multiplayer sessions directly from mobile
-- [ ] Mobile-friendly multiplayer configuration
-- [ ] Mobile-friendly multiplayer session UI
+Multiplayer is built around CelesteNet rather than implementing a separate networking protocol.
 
-### 🗺️ Editing
+- [x] Dedicated Multiplayer entry on the main menu
+- [x] CelesteNet settings integrated into "Options → Multiplayer"
+- [x] CelesteNet's duplicate Mod Options section hidden while MobileMultiplayer is active
+- [x] Configurable username
+- [x] Official CelesteNet server support
+- [x] Saved/custom server support
+- [x] Add custom servers
+- [x] Remove custom servers
+- [x] LAN server discovery on supported platforms
+- [x] Wrapper-provided server discovery
+- [x] Join sessions from the mobile-friendly UI
+- [x] Disconnect from the current server
+- [ ] Native mobile CelesteNet host service
+- [ ] Final Android multiplayer-host integration
+- [ ] Final iOS multiplayer-host integration
 
-- [ ] Improved in-game map editing
-- [ ] Mobile-friendly map creation and modification tools
+🗺️ Map Editing
 
-### ⚙️ Runtime
+"BetterMapEditor" provides a simplified in-game map-development environment inspired by Lönn and Ahorn.
+
+- [x] Map Editor entry on the main menu
+- [x] Create new Everest map mods
+- [x] Multiple chapters per project
+- [x] Multiple rooms per chapter
+- [x] Room sidebar
+- [x] Add rooms
+- [x] Delete rooms
+- [x] Switch rooms directly inside the editor
+- [x] Place/remove solid tiles
+- [x] Place player spawns
+- [x] Basic entity placement
+- [x] Strawberry placement
+- [x] Spring placement
+- [x] Spike placement
+- [x] Entity selection
+- [x] Entity movement
+- [x] Entity deletion
+- [x] Pan
+- [x] Zoom
+- [x] Undo/redo
+- [x] Resize rooms
+- [x] Save projects
+- [x] Build real Celeste map binaries
+- [x] Mouse input
+- [x] Optional MobileBridge touch input
+- [ ] Expanded entity catalog
+- [ ] Trigger editing
+- [ ] Decal editing
+- [ ] Styleground editing
+- [ ] Advanced room metadata
+- [ ] More Lönn/Ahorn-style editing tools
+
+⚙️ Runtime
 
 - [x] Threaded .NET WebAssembly
-- [x] Embedded GeckoView runtime
+- [x] Embedded GeckoView runtime on Android
 - [x] Cross-origin-isolated local asset server
-- [x] `SharedArrayBuffer` support
+- [x] "SharedArrayBuffer"
+- [x] WebAssembly threads
 - [x] Split-WASM streaming
-- [x] Explicit save and mod persistence
+- [x] Explicit save persistence
+- [x] Explicit mod persistence
 - [x] Android runtime diagnostics through logcat
+- [ ] iOS wrapper completion
 
 ---
 
-## Architecture
+User Interface
+
+The mobile integration reorganizes Celeste's menus rather than adding a large collection of unrelated Everest Mod Options.
+
+Main Menu
+
+The intended mobile home screen is:
+
+Climb
+Multiplayer
+Map Editor
+Mod Manager
+Options
+About the Port
+
+Additional third-party mods are still allowed to add main-menu entries.
+
+If those additions overflow the available vertical space, the menu switches to a multi-column layout and places additional items to the right.
+
+Options
+
+Mobile settings are integrated into Celeste's normal Options screen.
+
+Conceptually:
+
+Options
+│
+├── [normal Celeste settings]
+│
+├── Mobile
+│   ├── Haptics
+│   ├── Center Camera
+│   │
+│   └── Mobile Controls
+│       ├── Movement
+│       │   ├── Joystick
+│       │   └── Arrows
+│       ├── 8-Way Snap
+│       └── Resize / Move Controls
+│
+├── Multiplayer
+│   ├── Host
+│   ├── Join
+│   ├── Username
+│   └── CelesteNet settings
+│
+├── Saves
+│   ├── Export Save
+│   └── Load Save
+│
+└── Mods
+    └── Mod Options
+
+The normal Mod Options menu is intentionally preserved.
+
+Only settings belonging to the mobile suite are relocated.
+
+Third-party Everest mods continue to expose their settings through Mod Options normally.
+
+---
+
+Architecture
 
 At a high level:
 
-```text
-┌───────────────────────────────────────┐
-│               Android                 │
-│                                       │
-│  MainActivity                         │
-│       │                               │
-│       ├────────► LocalAssetServer     │
-│       │               │               │
-│       │               ▼               │
-│       │        assets/www/            │
-│       │                               │
-│       ▼                               │
-│   GeckoView                           │
-└───────┬───────────────────────────────┘
-        │
-        ▼
-┌───────────────────────────────────────┐
-│       Threaded .NET WASM Runtime      │
-│                                       │
-│          Celeste + Everest            │
-│                                       │
-│  MobileBridge / Everest integration   │
-└───────────────────────────────────────┘
-```
+┌────────────────────────────────────────────┐
+│              Platform Wrapper              │
+│                                            │
+│   AndroidWrapper         IOSWrapper        │
+│         │                     │            │
+│         └──────────┬──────────┘            │
+│                    │                       │
+│        Platform-specific services          │
+│                    │                       │
+└────────────────────┼───────────────────────┘
+                     │
+                     ▼
+┌────────────────────────────────────────────┐
+│                 Celeste/                   │
+│                                            │
+│       Threaded .NET WASM Runtime           │
+│                                            │
+│           Celeste + Everest                │
+│                                            │
+│        Web / JavaScript runtime            │
+└────────────────────┬───────────────────────┘
+                     │
+                     ▼
+┌────────────────────────────────────────────┐
+│            CelesteMobileMods/              │
+│                                            │
+│  MobileBridge                              │
+│  MobileTweaks                              │
+│  MouseUI                                   │
+│  MobileMultiplayer                         │
+│  BetterMapEditor                           │
+│  ...third-party Everest mods               │
+└────────────────────────────────────────────┘
 
-The APK does **not** run Celeste as Android-native game code.
+Celeste is not being rewritten as native mobile game code.
 
-Instead, Celeste and Everest remain inside the WebAssembly environment while Android provides the platform host around them.
+The shared runtime remains inside WebAssembly.
 
-This separation makes the runtime considerably more portable. The same core WASM environment can potentially be hosted on other platforms while replacing only the platform-specific services for things such as:
+Platform wrappers provide services around it.
 
-- Input
-- Haptics
-- Storage
-- Window management
-- Native UI
-- File access
-- Platform integrations
+This makes the architecture significantly more portable than tying the game runtime directly to Android APIs.
 
 ---
 
-## Why GeckoView?
+Repository Layout
 
-The threaded runtime requires browser functionality including:
+Celeste-Mobile-Port/
+│
+├── AndroidWrapper/
+│   ├── Android application
+│   ├── GeckoView host
+│   ├── local asset server
+│   ├── Android lifecycle integration
+│   ├── native haptics
+│   ├── platform storage
+│   └── Android-specific bridge services
+│
+├── IOSWrapper/
+│   ├── iOS application
+│   ├── embedded web-runtime host
+│   ├── native iOS platform services
+│   └── iOS-specific bridge implementation
+│
+├── Celeste/
+│   ├── index.html
+│   ├── bundle.js
+│   ├── styles.css
+│   ├── cfg.js
+│   ├── _framework/
+│   ├── celeste/
+│   ├── assets/
+│   ├── plugins/
+│   └── Mods/
+│
+└── CelesteMobileMods/
+    │
+    ├── MobileBridge/
+    │   ├── MobileBridge.cs
+    │   ├── MobileBridge.csproj
+    │   ├── everest.yaml
+    │   └── Dialog/
+    │
+    ├── MobileTweaks/
+    │   ├── MobileTweaks.cs
+    │   ├── MobileTweaks.csproj
+    │   └── everest.yaml
+    │
+    ├── MouseUI/
+    │   ├── MouseUI.cs
+    │   ├── MouseUI.csproj
+    │   └── everest.yaml
+    │
+    ├── MobileMultiplayer/
+    │   ├── MobileMultiplayer.cs
+    │   ├── MobileMultiplayer.csproj
+    │   ├── everest.yaml
+    │   └── Dialog/
+    │
+    ├── BetterMapEditor/
+    │   ├── BetterMapEditor.cs
+    │   ├── BetterMapEditor.csproj
+    │   ├── everest.yaml
+    │   └── Dialog/
+    │
+    └── BuildDeployMods.ps1
 
-```text
+Generated builds, signing keys, commercial game data, SDKs, caches, local toolchains, and other machine-specific files are intentionally excluded from version control.
+
+---
+
+Android Wrapper
+
+Android currently provides the primary mobile host.
+
+GeckoView
+
+The Android application embeds Mozilla GeckoView.
+
+The threaded runtime requires:
+
 SharedArrayBuffer
 WebAssembly threads
 Cross-origin isolation
-```
 
-The Android application therefore embeds **Mozilla GeckoView** rather than relying on Android WebView.
+GeckoView provides the browser/runtime capabilities needed to run the threaded Celeste WASM environment while remaining embedded directly inside the Android application.
 
-GeckoView runs directly inside the application, so Celeste remains inside the Android process instead of opening in an external browser.
+Celeste therefore runs inside the application process rather than opening in an external browser.
 
-And yes, **we actually love Mozilla** — GeckoView is what makes the multithreaded runtime practical here. ❤️🦊
+And yes, we actually love Mozilla — GeckoView is what makes the multithreaded runtime practical here. ❤️🦊
 
----
+Native Responsibilities
 
-## Project Layout
+The Android wrapper is responsible for services such as:
 
-```text
-Celeste-Mobile-Port/
-│
-├── CelesteAndroidApp/
-│   ├── app/
-│   │   └── src/main/
-│   │       ├── AndroidManifest.xml
-│   │       ├── java/com/unlim8ted/celeste/
-│   │       │   ├── MainActivity.java
-│   │       │   └── LocalAssetServer.java
-│   │       └── res/
-│   │
-│   ├── assets/
-│   │   └── www/
-│   │       ├── index.html
-│   │       ├── bundle.js
-│   │       ├── styles.css
-│   │       ├── cfg.js
-│   │       ├── _framework/
-│   │       ├── celeste/
-│   │       ├── assets/
-│   │       ├── plugins/
-│   │       └── Mods/
-│   │
-│   ├── gradle/
-│   ├── gradlew
-│   └── gradlew.bat
-│
-├── CelesteAndroidPatch/
-│   ├── Source/
-│   └── build/
-│
-└── scripts/
-    ├── build-apk.ps1
-    ├── package-android-port-mod.ps1
-    └── postprocess-framework.sh
-```
-
-### Important Paths
-
-| Path | Purpose |
-|---|---|
-| `CelesteAndroidApp/` | Android Gradle project and GeckoView host |
-| `CelesteAndroidApp/app/src/main/` | Native Android application source |
-| `CelesteAndroidApp/assets/www/` | Browser-facing Celeste/Everest runtime |
-| `CelesteAndroidApp/assets/www/_framework/` | Threaded .NET WASM runtime |
-| `CelesteAndroidApp/assets/www/celeste/` | Locally supplied game/runtime assemblies |
-| `CelesteAndroidApp/assets/www/Mods/` | Everest mods bundled into the local build |
-| `CelesteAndroidPatch/Source/` | Android-specific Everest integration source |
-| `scripts/` | Build, packaging, and WASM post-processing scripts |
-
-Generated builds, SDKs, signing keys, commercial game data, caches, and other machine-local files are intentionally excluded from version control.
+- Creating the application window
+- Landscape orientation
+- Immersive/fullscreen Android behavior
+- Creating GeckoView
+- Creating the Gecko runtime/session
+- Hosting the local runtime
+- Native lifecycle handling
+- Native haptics
+- Storage integration
+- Save import/export
+- File access
+- Mod-management support
+- Multiplayer host services
+- Native bridge functionality
 
 ---
 
-# Android Host
+iOS Wrapper
 
-## MainActivity
+"IOSWrapper/" provides the corresponding platform layer for iOS.
 
-`MainActivity` provides the native Android shell.
+The goal is not to maintain a separate iOS Celeste implementation.
 
-It is responsible for:
+Instead, iOS should host the same:
 
-- Creating a fullscreen immersive activity
-- Enforcing landscape orientation
-- Starting the local asset server
-- Configuring GeckoView
-- Creating the `GeckoRuntime`
-- Creating the `GeckoSession`
-- Attaching the session to `GeckoView`
-- Loading the local runtime
-- Managing Android-specific lifecycle behavior
+Celeste/
+CelesteMobileMods/
 
-The runtime is loaded from a loopback address similar to:
+runtime used by Android while implementing equivalent native platform services.
 
-```text
-http://127.0.0.1:<random-port>/
-```
+Areas of work include:
 
-which resolves to the packaged:
+- Embedded browser/runtime hosting
+- Touch integration
+- Storage
+- Haptics
+- Save import/export
+- File access
+- Mod persistence
+- Multiplayer host services
+- Lifecycle handling
 
-```text
-CelesteAndroidApp/assets/www/index.html
-```
+iOS support is currently less complete than Android.
 
 ---
 
-## Local Asset Server
+Web Runtime
 
-`LocalAssetServer.java` is a lightweight HTTP server backed by Android packaged assets.
+"Celeste/" contains the browser-facing runtime shared by the platform wrappers.
 
-It:
+Core Files
 
-- Binds exclusively to `127.0.0.1`
-- Selects a local port at runtime
-- Serves files from the packaged `www` runtime
-- Supports `GET`
-- Supports `HEAD`
-- Sanitizes request paths
-- Rejects directory traversal
-- Maps required MIME types
-- Streams large WASM binaries
-- Provides Android-side diagnostics
-
-### Cross-Origin Isolation
-
-The server applies:
-
-```http
-Cross-Origin-Opener-Policy: same-origin
-Cross-Origin-Embedder-Policy: require-corp
-Cross-Origin-Resource-Policy: cross-origin
-Permissions-Policy: cross-origin-isolated=*
-```
-
-These headers provide the isolated environment required by the threaded runtime.
-
-### Runtime Logging
-
-The diagnostic endpoint:
-
-```text
-/__android_port_log
-```
-
-allows JavaScript messages to appear in Android logcat under:
-
-```text
-CelesteAssetServer
-```
-
----
-
-# Web Runtime
-
-`CelesteAndroidApp/assets/www/` contains the browser-facing portion of the application.
-
-## Core Files
-
-### `index.html`
+"index.html"
 
 Initial document and runtime bootstrap.
 
-### `bundle.js`
+"bundle.js"
 
-Contains much of the mobile/browser integration layer:
+Contains browser/mobile integration including:
 
 - WASM loader behavior
-- Mobile touch controls
+- Touch controls
 - Layout editing
 - Save management
 - File management
 - Mod browser
 - Haptic bridge
-- Android bridge functions
+- Platform bridge functions
 - Runtime persistence
 - Mobile input behavior
 
-### `styles.css`
+"styles.css"
 
-Defines the web and mobile-control interface styling.
+Defines web and touch-control interface styling.
 
-### `cfg.js`
+"cfg.js"
 
-Describes the locally supplied `data.data` payload.
+Describes the locally supplied game-data payload.
 
-### `_framework/`
+"_framework/"
 
 Contains the threaded .NET WebAssembly runtime.
 
-### `celeste/`
+"celeste/"
 
-Contains locally supplied Celeste and Everest runtime assemblies.
+Contains locally supplied Celeste/Everest runtime assemblies.
 
-### `Mods/`
+"Mods/"
 
-Contains Everest mods included in the local build.
+Contains Everest mods available to the runtime.
 
 ---
 
-# Split-WASM Streaming
+Local Asset Server
 
-Some `dotnet.native.*.wasm` binaries are too large to be conveniently packaged as single Android assets.
+The Android wrapper includes a lightweight HTTP server backed by packaged/runtime assets.
 
-The post-processing system divides them into numbered chunks:
+It:
 
-```text
+- Binds only to loopback
+- Selects a local port dynamically
+- Serves the "Celeste/" runtime
+- Supports "GET"
+- Supports "HEAD"
+- Sanitizes request paths
+- Rejects directory traversal
+- Maps required MIME types
+- Streams large WASM binaries
+- Provides platform-side diagnostics
+
+The runtime is loaded from an address similar to:
+
+http://127.0.0.1:<random-port>/
+
+Cross-Origin Isolation
+
+The local server provides headers such as:
+
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+Cross-Origin-Resource-Policy: cross-origin
+Permissions-Policy: cross-origin-isolated=*
+
+These are required for threaded WebAssembly and "SharedArrayBuffer".
+
+---
+
+Split-WASM Streaming
+
+Some "dotnet.native.*.wasm" binaries are too large to package conveniently as single platform assets.
+
+The post-processing system can split them into numbered chunks:
+
 dotnet.native.example.wasm0
 dotnet.native.example.wasm1
 dotnet.native.example.wasm2
 dotnet.native.example.wasm3
 dotnet.native.example.wasm4
-```
 
-When GeckoView requests:
+When the browser requests:
 
-```text
 dotnet.native.example.wasm
-```
 
-`LocalAssetServer` discovers the numbered parts and streams them sequentially as one:
+the local host streams the numbered pieces sequentially as one:
 
-```text
 Content-Type: application/wasm
-```
 
 response.
 
-To GeckoView and the .NET runtime, the result behaves like the original single WASM file.
+To GeckoView and the .NET runtime, it behaves like the original single WASM binary.
 
 ---
 
-# Persistence
+Persistence
 
-The runtime intentionally keeps `/libsdl` memory-backed.
+The runtime intentionally avoids persisting the entire virtual runtime filesystem.
 
-Persisting the complete runtime tree through OPFS caused GeckoView to hang during initialization, so persistent data is handled explicitly instead.
+Persisting the whole runtime through browser-backed storage caused initialization problems, so only user-relevant data is persisted explicitly.
 
-```text
+Conceptually:
+
 Celeste runtime filesystem
           │
           ▼
-   Selected save/mod data
+   Selected persistent data
+          │
+          ├── Saves
+          ├── Everest settings
+          ├── Mods
+          └── Mobile data
           │
           ▼
       IndexedDB
@@ -416,431 +562,625 @@ Celeste runtime filesystem
           │
           ▼
 Restore into runtime filesystem
-```
 
-This approach persists the data users actually need without forcing the entire game runtime into browser-backed persistent storage.
+This keeps persistence focused on data the user actually needs.
 
 ---
 
-# Mobile / JavaScript Bridge
+Modular Everest Components
 
-The web runtime exposes a set of:
+Mobile functionality is split into independent Everest modules instead of one bigger Android-specific mod.
 
-```javascript
-window.celesteAndroid...
-```
 
-functions that can be called by the Everest-side mobile integration.
+Mobile Bridge
 
-The bridge provides access to services including:
+"MobileBridge" is the low-level communication layer between Everest and the platform/browser host.
 
-- Haptic feedback
-- Save manager
-- File manager
-- Mod browser
-- Touch-layout editor
-- URL handling
-- Game-data reset
-- Option synchronization
+It is intentionally separated from higher-level gameplay/UI policy.
+
+Examples of bridge services include:
+
+- Haptics
+- Platform detection
 - Touch coordinates
-- Pointer input
-- Tap input
-- Scroll input
+- Tap events
+- Swipe/scroll events
+- Save manager requests
+- Save export
+- Save import
+- File manager requests
+- Mod browser requests
+- Touch-layout editor requests
+- URL handling
+- Gameplay-control configuration
+- Multiplayer server discovery
+- Multiplayer host-service requests
 
 Conceptually:
 
-```text
 Celeste / Everest
        │
        ▼
-.NET JavaScript Interop
+MobileBridge
        │
        ▼
-window.celesteAndroid...
+.NET ↔ JavaScript interop
        │
-       ├──► Touch UI
-       ├──► Haptics
-       ├──► Storage
-       ├──► Save Manager
-       ├──► File Manager
-       └──► Mod Browser
-```
+       ▼
+Platform wrapper
+       │
+       ├── Haptics
+       ├── Storage
+       ├── Save Manager
+       ├── File Manager
+       ├── Mod Manager
+       ├── Touch Controls
+       └── Multiplayer Services
 
-Bridge calls are designed to fail gracefully when the Android-specific JavaScript environment is unavailable.
+Bridge calls are designed to fail gracefully when the corresponding platform implementation is unavailable.
+
+
+MouseUI
+
+Adds generic mouse-based interaction to Celeste's UI.
+
+Responsibilities include:
+
+- Mouse menu navigation
+- Clicking UI elements
+- Scroll-wheel support
+- Pointer-based file selection
+- Pointer-based chapter selection
+- Pointer-based journal navigation
+- Pointer-based TextMenu interaction
+- Replacing controller-only bottom-screen navigation hints
+- Clickable GO BACK behavior
+- Optional touch input supplied through "MobileBridge"
+
+"MouseUI" does not require MobileBridge for desktop mouse functionality.
+
+If MobileBridge is present, touch is automatically treated as an additional pointer source.
+
+
+MobileTweaks
+
+Handles mobile-specific Celeste behavior and UI policy.
+
+Responsibilities include:
+
+- Camera centering
+- Intro/startup skipping
+- Main-menu organization
+- Mobile Options integration
+- Browser Fullscreen suppression
+- Right-column menu overflow
+- Relocating mobile-suite settings
+- Preserving third-party Mod Options
+
+"MobileTweaks" does not provide low-level platform communication.
+
+
+MobileMultiplayer
+
+Builds a mobile-friendly multiplayer experience around CelesteNet.
+
+It does not replace CelesteNet's networking implementation.
+
+Instead, it:
+
+- Adds Multiplayer to the main menu
+- Hides CelesteNet's standalone Mod Options section
+- Recreates CelesteNet settings under "Options → Multiplayer"
+- Replaces the normal connection/server picker with Host and Join flows
+- Preserves the rest of CelesteNet's settings
+- Provides username configuration
+- Lists official/saved/custom/discovered servers
+- Supports custom server management
+- Requests native hosting through MobileBridge
+
+CelesteNet remains an external dependency.
+
+The mobile build script does not rebuild CelesteNet.
+
+BetterMapEditor
+
+Provides a standalone map-editing environment.
+
+Its design goal is approximately:
+
+«A smaller, easier in-game editor inspired by Lönn/Ahorn rather than a replacement for every advanced desktop mapping feature.»
+
+Responsibilities include:
+
+- Project creation
+- Everest map-mod creation
+- Multiple chapters
+- Multiple rooms
+- Graphical room editing
+- Tile editing
+- Basic entities
+- Spawn placement
+- Pan/zoom
+- Undo/redo
+- Map-binary generation
+- Mouse support
+- Optional MobileBridge touch support
 
 ---
 
-# Modular Everest Components
+Module Relationships
 
-The mobile functionality is being separated into smaller Everest modules instead of remaining one monolithic Android-specific mod.
+The modules intentionally avoid unnecessary hard dependencies.
 
-## MouseUI
+Conceptually:
 
-Generic mouse and pointer support for Celeste's UI.
-
-Planned responsibilities include:
-
-- Mouse-based menu navigation
-- Clicking UI elements
-- Pointer hover handling
-- Scroll-wheel support
-- Virtual pointer input for touchscreen platforms
-
-`MouseUI` is intended to be useful independently of the Android port.
-
-## BetterMapEditor
-
-Improved map editing and creation tools.
-
-The goal is to keep map-editing functionality independent from the mobile platform layer so it can also be useful on desktop installations.
-
-## MobileMultiplayer
-
-Mobile-specific multiplayer support.
-
-Planned functionality includes:
-
-- Hosting sessions from mobile
-- Joining sessions from mobile
-- Mobile-friendly connection configuration
-- Mobile-oriented multiplayer UI
-
-## MobileTweaks
-
-Mobile-specific Celeste behavior and quality-of-life improvements.
-
-Examples include:
-
-- Camera centering
-- Mobile menu adjustments
-- Startup behavior
-- Mobile option changes
-- Other gameplay and UI tweaks
-
-## MobileBridge
-
-The low-level communication layer between Everest and the mobile/browser host.
-
-Its responsibility is to expose platform capabilities rather than implement gameplay policy.
-
-Examples include:
-
-- Haptics
-- Pointer information
-- Touch events
-- Platform detection
-- Save manager requests
-- File manager requests
-- Mod-browser requests
-- URL handling
-
-The intended dependency model is roughly:
-
-```text
-                    MouseUI
-                       ▲
-                       │
                  MobileTweaks
-                       │
-                       ▼
-                  MobileBridge
-                       ▲
-                       │
-               MobileMultiplayer
+                /      |      \
+               /       |       \
+              ▼        ▼        ▼
+      MobileBridge  MouseUI  MobileMultiplayer
+           │           │            │
+           │           │            ▼
+           │           │        CelesteNet
+           │           │
+           └──── touch ─┘
 
 
               BetterMapEditor
-                   independent
-```
+                    │
+            optional touch via
+              MobileBridge
 
-This keeps reusable features independent while allowing the Android port to combine them into a complete mobile experience.
+Important points:
+
+- "MouseUI" works with mouse without MobileBridge.
+- "BetterMapEditor" works with mouse without MobileBridge.
+- "MobileMultiplayer" uses installed CelesteNet rather than rebuilding it.
+- MobileBridge owns native/platform communication.
+- MobileTweaks owns the unified mobile menu experience.
+- Unrelated third-party mods continue using Everest normally.
 
 ---
 
-# WASM Loader Rebuild
+Multiplayer Architecture
+
+CelesteNet remains responsible for actual multiplayer synchronization.
+
+"MobileMultiplayer" changes how users interact with it.
+
+Instead of:
+
+Mod Options
+└── CelesteNet
+    └── Connect to...
+
+the mobile interface becomes:
+
+Options
+└── Multiplayer
+    ├── Host
+    ├── Join
+    ├── Username
+    └── CelesteNet settings
+
+Join
+
+The Join screen can expose:
+
+- Official CelesteNet server
+- Existing CelesteNet server setting
+- CelesteNet saved servers
+- Custom servers
+- Locally discovered servers
+- Wrapper-discovered servers
+
+Custom servers can be added and removed directly from the UI.
+
+Host
+
+Hosting requires functionality that cannot be implemented entirely inside a browser/WASM client.
+
+The intended route is:
+
+MobileMultiplayer
+       │
+       ▼
+MobileBridge
+       │
+       ▼
+AndroidWrapper / IOSWrapper
+       │
+       ▼
+Native CelesteNet server host
+
+The platform wrapper therefore handles the actual listening server process/service while the Everest mod provides the user interface and session control.
+
+---
+
+Map Editor Architecture
+
+"BetterMapEditor" stores editable project state and emits real Celeste map binaries.
+
+A project can contain:
+
+Map Project
+│
+├── Chapter 1
+│   ├── Room 1
+│   ├── Room 2
+│   └── Room 3
+│
+├── Chapter 2
+│   ├── Room 1
+│   └── Room 2
+│
+└── ...
+
+The editor workspace is organized around:
+
+┌──────────────┬───────────────────────────────────┐
+│              │                                   │
+│ Room list    │           Room canvas             │
+│              │                                   │
+│ Room 1       │   Tiles / entities / spawn        │
+│ Room 2       │                                   │
+│ Room 3       │                                   │
+│              │                                   │
+│ + New Room   │                                   │
+│ - Delete     │                                   │
+│              │                                   │
+├──────────────┴───────────────────────────────────┤
+│ Select | Solid | Erase | Spawn | Berry | Spring │
+│ Spikes | Pan | Undo | Redo | Zoom | Save        │
+└──────────────────────────────────────────────────┘
+
+It is intentionally simpler than Lönn or Ahorn but follows the same general room/canvas/tool workflow.
+
+---
+
+WASM Loader Rebuild
 
 The threaded loader is based on Mercury Workshop's Celeste WASM work.
 
-After publishing, Android-specific post-processing is performed by:
+After publishing, platform-specific post-processing can:
 
-```text
-scripts/postprocess-framework.sh
-```
+- Transfer the main canvas into the threaded runtime path
+- Route Emscripten main-thread assembly calls correctly
+- Adjust runtime limits
+- Split large "dotnet.native.*.wasm" binaries
+- Copy the processed runtime into "Celeste/_framework/"
 
-The post-processing stage:
-
-- Transfers the main `.canvas` into the threaded runtime path
-- Routes Emscripten main-thread assembly calls through `runMainThreadEmAsm`
-- Raises the runtime ULEB limit
-- Splits large `dotnet.native.*.wasm` binaries into 20 MB chunks
-- Copies the resulting framework into:
-
-```text
-CelesteAndroidApp/assets/www/_framework/
-```
+The exact scripts and paths may vary as the repository is reorganized.
 
 ---
 
-# Build Pipeline
+Building Mobile Mods
 
-A complete local build roughly follows:
+The mobile mods live under:
 
-```text
-Everest modules
-      │
-      ▼
+CelesteMobileMods/
+
+Each code mod contains:
+
+SomeMod/
+├── SomeMod.cs
+├── SomeMod.csproj
+├── everest.yaml
+└── optional content folders
+
+Examples of optional content folders include:
+
+Dialog/
+Graphics/
+Maps/
+Loenn/
+Audio/
+
+Automatic Mod Detection
+
+"BuildDeployMods.ps1" does not maintain a hard-coded list of mobile mods.
+
+A directory is automatically detected as a buildable mod when it contains both:
+
+everest.yaml
+*.csproj
+
+For example:
+
+CelesteMobileMods/
+│
+├── MobileBridge/
+│   ├── MobileBridge.csproj
+│   └── everest.yaml
+│
+├── MouseUI/
+│   ├── MouseUI.csproj
+│   └── everest.yaml
+│
+└── SomeFutureMod/
+    ├── SomeFutureMod.csproj
+    └── everest.yaml
+
+"SomeFutureMod" will automatically be built on the next run.
+
+CelesteNet
+
+CelesteNet is deliberately not managed by the mobile-mod build script.
+
+The script does not:
+
+- Build CelesteNet
+- Repackage CelesteNet
+- Delete CelesteNet
+- Replace CelesteNet
+- Deploy CelesteNet
+
+CelesteNet should already exist in the target Everest installation.
+
+Mod Package Layout
+
+Mobile mods use a flat code-mod package:
+
+MobileBridge.zip
+├── everest.yaml
+├── MobileBridge.dll
+└── Dialog/
+
+The corresponding manifest contains:
+
+DLL: MobileBridge.dll
+
+The DLL is not placed under "/bin" inside the Everest ZIP.
+
+The source project's normal build output can still live under:
+
+bin/
+
+because that is simply where "dotnet build" writes the compiled file.
+
+The deployment script copies the resulting DLL out of that build directory and places it at the root of the Everest package.
+
+---
+
+Build Pipeline
+
+At a high level:
+
+CelesteMobileMods/
+        │
+        ▼
+Auto-detect mod projects
+        │
+        ▼
 Compile C#
-      │
-      ▼
-Package mods
-      │
-      ▼
-Build / prepare threaded WASM runtime
-      │
-      ▼
+        │
+        ▼
+Package Everest mods
+        │
+        ▼
+Celeste/Mods
+        │
+        ▼
+Prepare threaded WASM runtime
+        │
+        ▼
 Post-process framework
-      │
-      ▼
-Supply legally obtained Celeste game files
-      │
-      ▼
-Gradle Android build
-      │
-      ▼
-APK
-```
+        │
+        ▼
+Supply legally obtained Celeste files
+        │
+        ▼
+Platform wrapper build
+        │
+        ├── Android APK
+        └── iOS application
 
 ---
 
-# Prerequisites
+Prerequisites
 
 Development may require:
 
-- Android Studio
+- Android Studio (optional) 
 - Android SDK
 - Compatible JDK
-- Gradle 8.11.1 through the included wrapper
+- Gradle through the included Android wrapper
 - .NET SDK
 - Node.js
-- WSL for rebuilding the WASM runtime
+- WSL or Linux environment for rebuilding/post-processing the WASM runtime
 - A legally obtained copy of Celeste
+
+iOS development additionally requires the appropriate Apple development environment.
 
 The repository does not download or distribute commercial Celeste game files.
 
 ---
 
-# Building
-
-## 1. Build the Everest Integration
+Building the Everest Mods
 
 From the repository root:
 
-```powershell
-dotnet build .\CelesteAndroidPatch\Source\AndroidPort.csproj -c Debug
-```
+powershell -ExecutionPolicy Bypass -File .\CelesteMobileMods\BuildDeployMods.ps1
 
-Package it with:
+The script:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\package-android-port-mod.ps1
-```
+1. Detects all buildable mod directories automatically.
+2. Ignores CelesteNet.
+3. Builds each detected ".csproj".
+4. Reads the mod's existing "everest.yaml".
+5. Copies the compiled DLL to the ZIP root.
+6. Includes Everest content folders such as "Dialog/" or "Graphics/".
+7. Verifies the package.
+8. Deploys it to the configured desktop Celeste installation for testing.
 
-The generated mod package is copied into:
-
-```text
-CelesteAndroidApp\assets\www\Mods\
-```
-
----
-
-## 2. Rebuild the Threaded WASM Runtime
-
-From a configured WSL environment inside the Celeste WASM source:
-
-```bash
-dotnet publish loader \
-    -c Release \
-    --nodereuse:false \
-    -v minimal
-```
-
-Then run the Android post-processing stage from the repository root:
-
-```powershell
-wsl.exe -e bash -lc 'cd /mnt/o/celeste; bash scripts/postprocess-framework.sh'
-```
-
-The generated framework is placed under:
-
-```text
-CelesteAndroidApp/assets/www/_framework/
-```
+This is primarily a development/test deployment path.
 
 ---
 
-## 3. Build the Android APK
+Building the Android Runtime
 
-Enter the Android project:
+The exact Android build commands depend on the contents of "AndroidWrapper/", but the general process is:
 
-```powershell
-cd .\CelesteAndroidApp
-```
+Celeste/
+       │
+       ▼
+AndroidWrapper packages runtime
+       │
+       ▼
+Gradle build
+       │
+       ▼
+APK
 
-Verify the Gradle wrapper:
+A typical Gradle build is:
 
-```powershell
-.\gradlew.bat --version
-```
-
-Expected version:
-
-```text
-Gradle 8.11.1
-```
-
-Build:
-
-```powershell
+cd .\AndroidWrapper
 .\gradlew.bat --no-daemon :app:assembleDebug
-```
 
-The debug APK is generated at:
+The generated APK can then be installed with:
 
-```text
-CelesteAndroidApp\app\build\outputs\apk\debug\app-debug.apk
-```
-
-Copy it to the repository root if desired:
-
-```powershell
-Copy-Item `
-    .\app\build\outputs\apk\debug\app-debug.apk `
-    ..\celeste-debug.apk `
-    -Force
-```
-
-The complete build can also be run through:
-
-```powershell
-cd ..
-powershell -ExecutionPolicy Bypass -File .\scripts\build-apk.ps1
-```
+adb install -r <path-to-apk>
 
 ---
 
-# Testing
+Testing
 
-Install or update the development APK:
+Desktop Everest Testing
 
-```powershell
-adb install -r .\celeste-debug.apk
-```
+The individual modules are designed so they can be tested on normal desktop Celeste where practical.
 
-Launch it:
+Examples:
 
-```powershell
-adb shell am start -n com.unlim8ted.celeste/.MainActivity
-```
+- "MouseUI" works as a normal desktop mouse-navigation mod.
+- "BetterMapEditor" works with mouse input.
+- "MobileTweaks" can be tested against desktop Everest behavior.
+- "MobileMultiplayer" can use an installed CelesteNet client.
+- "MobileBridge" safely no-ops platform calls when the mobile host is absent.
 
-## Logcat
+Android
 
-Useful runtime logging:
+Launch the Android application using ADB as appropriate for the configured application ID.
 
-```powershell
+Useful logcat categories include:
+
 adb logcat CelesteAssetServer:D GeckoConsole:D GeckoRuntime:D AndroidRuntime:E *:S
-```
 
 For a clean test:
 
-```powershell
 adb logcat -c
-adb shell am start -n com.unlim8ted.celeste/.MainActivity
-adb logcat CelesteAssetServer:D GeckoConsole:D GeckoRuntime:D AndroidRuntime:E *:S
-```
+
+then launch the application and begin log capture.
 
 ---
 
-# Current Development Priorities
+Current Development Priorities
 
 The main areas currently being worked on are:
 
-1. **Everest compatibility**
-   - Complete support for the modified threaded Everest runtime.
+1. Mobile UI integration
+   
+   - Finish consistent pointer/touch support across every Celeste/Everest menu.
+   - Continue refining the unified mobile Options layout.
 
-2. **Touch UI**
-   - Extend pointer/touch interaction across all Celeste menus.
+2. Multiplayer
+   
+   - Finish Android-native CelesteNet hosting.
+   - Add equivalent iOS host support.
+   - Improve discovery and session-management UX.
 
-3. **Modularization**
-   - Split the current Android-specific Everest functionality into `MouseUI`, `MobileBridge`, `MobileTweaks`, `MobileMultiplayer`, and related independent modules.
+3. BetterMapEditor
+   
+   - Expand the entity catalog.
+   - Add triggers.
+   - Add decals.
+   - Add stylegrounds.
+   - Improve selection and room-management tools.
+   - Continue moving toward a lightweight Lönn-style experience.
 
-4. **Multiplayer**
-   - Host sessions directly from Android.
-   - Join sessions directly from Android.
-   - Build a mobile-friendly session interface.
+4. Everest compatibility
+   
+   - Continue testing third-party mods against the threaded WASM runtime.
+   - Fix assumptions that depend on desktop-only APIs or behavior.
 
-5. **Map editing**
-   - Develop the standalone `BetterMapEditor` functionality.
+5. iOS
+   
+   - Complete the iOS wrapper.
+   - Implement equivalent storage, haptic, file, and multiplayer services.
 
-6. **Mod ecosystem**
-   - Continue improving browsing, installation, persistence, and management of Everest mods on mobile.
+6. Mod ecosystem
+   
+   - Continue improving browsing, installation, persistence, updating, and management of Everest mods on mobile.
 
 ---
 
-# Credits
+Credits
 
-This project would not exist without the work of several projects and communities.
+This project builds on work from several projects and communities.
 
-### Unlim8ted Studios
+Unlim8ted Studios
 
-Android port, mobile integration, UI, platform bridge, and project-specific development.
+Mobile port architecture, Android integration, mobile UI, platform bridge, modular Everest integration, multiplayer UI, map editor, and project-specific development.
 
 https://unlim8ted.com
 
-### Mercury Workshop
+Mercury Workshop
 
-Webleste / Celeste WASM, which provides the WebAssembly foundation used by this project.
+Webleste / Celeste WASM, providing the WebAssembly foundation used by this project.
 
 https://github.com/MercuryWorkshop/celeste-wasm
 
-### LucyYuih
+Everest
+
+The Celeste mod loader and API used by the mobile mod ecosystem.
+
+CelesteNet
+
+Multiplayer infrastructure used by "MobileMultiplayer".
+
+Mozilla
+
+GeckoView provides the embedded Android browser engine required for the current threaded WASM runtime.
+
+LucyYuih
 
 Prior Android Celeste WASM work used as part of the Android-port foundation.
 
 https://gamejolt.com/games/CelesteWASMAndroid/1043072
 
-
-### Extremely OK Games
+Extremely OK Games
 
 Creators and rights holders of Celeste.
 
 ---
 
-# License & Attribution
+License & Attribution
 
-This is an unofficial community project created by **Unlim8ted Studios**.
+This is an unofficial community project created by Unlim8ted Studios.
 
-Original Android integration code and other original contributions by Unlim8ted Studios are shared publicly as part of this project. Contributions, testing, issue reports, and improvements are welcome.
+Original mobile integration code and other original contributions by Unlim8ted Studios are shared publicly as part of this project.
+
+Contributions, testing, issue reports, and improvements are welcome.
 
 This project builds upon or interfaces with third-party software including:
 
 - Celeste WASM / Webleste
 - Everest
+- CelesteNet
 - GeckoView
 - Prior Android Celeste WASM work
 
-Third-party components remain subject to their respective copyright notices and licenses.
+Third-party components remain subject to their respective licenses and copyright notices.
 
-**Celeste and its associated names, characters, artwork, audio, game code, and other intellectual property belong to their respective rights holders.**
+Celeste and its associated names, characters, artwork, audio, game code, commercial assets, and other intellectual property belong to their respective rights holders.
 
-Commercial Celeste game data, including `data.data`, is **not included** in this repository and must be supplied from a legally obtained copy of Celeste.
+Commercial Celeste game data, including "data.data", is not included in this repository and must be supplied from a legally obtained copy of Celeste.
 
 This project is not affiliated with, sponsored by, or endorsed by Extremely OK Games.
 
 ---
 
-<div align="center">
+<div align="center">Made with ❤️ by
 
-### Made with ❤️,
-**Unlim8ted Studios**
+Unlim8ted Studios
 
 </div>
