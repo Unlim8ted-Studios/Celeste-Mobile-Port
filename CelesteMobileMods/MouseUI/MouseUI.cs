@@ -17,6 +17,8 @@ public sealed class MouseUIModule : EverestModule {
     private static bool desktopTapPending;
     private static bool ownsMInputDisabled;
     private static bool previousMInputDisabled;
+    private static bool backPromptVisibleThisRender;
+    private static bool backPromptVisibleForInput;
 
     public override void Load() {
         Engine.Instance.IsMouseVisible = true;
@@ -32,7 +34,6 @@ public sealed class MouseUIModule : EverestModule {
         On.Monocle.Engine.Update += OnEngineUpdate;
         On.Monocle.MInput.Update += OnMInputUpdate;
         On.Celeste.ButtonUI.Render += OnButtonUIRender;
-        On.Celeste.Overworld.ctor += OnOverworldCtor;
     }
 
     public override void Unload() {
@@ -47,7 +48,6 @@ public sealed class MouseUIModule : EverestModule {
         On.Monocle.Engine.Update -= OnEngineUpdate;
         On.Monocle.MInput.Update -= OnMInputUpdate;
         On.Celeste.ButtonUI.Render -= OnButtonUIRender;
-        On.Celeste.Overworld.ctor -= OnOverworldCtor;
 
         if (ownsMInputDisabled) {
             MInput.Disabled = previousMInputDisabled;
@@ -58,6 +58,8 @@ public sealed class MouseUIModule : EverestModule {
     private static bool UsingTouch => OptionalMobileBridge.TouchAvailable;
 
     private static void OnEngineUpdate(On.Monocle.Engine.orig_Update orig, Engine engine, GameTime gameTime) {
+        backPromptVisibleForInput = backPromptVisibleThisRender;
+        backPromptVisibleThisRender = false;
         desktopTapPending = false;
         orig(engine, gameTime);
     }
@@ -156,54 +158,31 @@ public sealed class MouseUIModule : EverestModule {
         return scene?.Entities.OfType<TextMenu>().LastOrDefault(m => m.Visible && m.Focused);
     }
 
-    private static void OnOverworldCtor(
-        On.Celeste.Overworld.orig_ctor orig,
-        Overworld self,
-        OverworldLoader loader) {
-
-        orig(self, loader);
-
-        Entity nav = new Entity {
-            Tag = Tags.HUD,
-            Depth = -1000000
-        };
-        nav.Add(new RenderComponent(DrawNavigationBar));
-        self.Add(nav);
-    }
-
-    private static void DrawNavigationBar() {
-        if (Engine.Scene is not Overworld scene) {
-            return;
-        }
-
-        bool shouldDraw =
-            scene.IsCurrent<OuiMainMenu>() ||
-            scene.IsCurrent<OuiFileSelect>() ||
-            scene.IsCurrent<OuiChapterSelect>() ||
-            scene.IsCurrent<OuiChapterPanel>() ||
-            scene.IsCurrent<OuiJournal>() ||
-            scene.IsCurrent<OuiCredits>();
-
-        if (IsAnyMenuOpen(scene) &&
-            GetTopMenu(scene)?.Tag != (Tags.PauseUpdate | Tags.HUD) &&
-            !scene.IsCurrent<OuiJournal>()) {
-            shouldDraw = false;
-        }
-
-        if (!shouldDraw) {
-            return;
-        }
-
+    private static void DrawBackButton() {
         const float x = 1680f;
         const float y = 1000f;
         const float w = 200f;
         const float h = 60f;
 
-        Draw.Rect(x - 10f, y - 10f, w + 20f, h + 20f, Color.Black * 0.7f);
-        Draw.Rect(x - 10f, y - 10f, w + 20f, 2f, Color.White);
+        Draw.Rect(
+            x - 10f,
+            y - 10f,
+            w + 20f,
+            h + 20f,
+            Color.Black * 0.7f);
+
+        Draw.Rect(
+            x - 10f,
+            y - 10f,
+            w + 20f,
+            2f,
+            Color.White);
+
         ActiveFont.DrawOutline(
             "GO BACK",
-            new Vector2(x + w * 0.5f, y + h * 0.5f),
+            new Vector2(
+                x + w * 0.5f,
+                y + h * 0.5f),
             new Vector2(0.5f, 0.5f),
             Vector2.One * 0.8f,
             Color.White,
@@ -212,7 +191,9 @@ public sealed class MouseUIModule : EverestModule {
     }
 
     private static bool IsBackButton(Vector2 pos) {
-        return pos.X > 1650f && pos.Y > 950f;
+        return backPromptVisibleForInput &&
+            pos.X > 1650f &&
+            pos.Y > 950f;
     }
 
     private static void OnButtonUIRender(
@@ -225,13 +206,27 @@ public sealed class MouseUIModule : EverestModule {
         float wiggle,
         float alpha) {
 
-        // Keep normal keyboard/gamepad prompts when MouseUI is being used only
-        // with a desktop mouse. Touch mode has its own clickable navigation UI.
-        if (UsingTouch) {
+        // MouseUI replaces the bottom-screen Confirm/Back controller hints.
+        // A clickable GO BACK button exists only on frames where Celeste itself
+        // attempts to render the normal MenuCancel / "Back X" prompt.
+        if (ReferenceEquals(button, Input.MenuCancel)) {
+            backPromptVisibleThisRender = true;
+            DrawBackButton();
             return;
         }
 
-        orig(position, label, button, scale, justifyX, wiggle, alpha);
+        if (ReferenceEquals(button, Input.MenuConfirm)) {
+            return;
+        }
+
+        orig(
+            position,
+            label,
+            button,
+            scale,
+            justifyX,
+            wiggle,
+            alpha);
     }
 
     private static void OnTitleScreenUpdate(
@@ -265,22 +260,6 @@ public sealed class MouseUIModule : EverestModule {
         }
 
         Vector2 pointer = PointerPosition();
-
-        foreach (MenuButton button in menu.Buttons) {
-            if (button == null || !button.Visible || !MainMenuHit(button, pointer.X, pointer.Y)) {
-                continue;
-            }
-
-            if (!button.Selected) {
-                foreach (MenuButton other in menu.Buttons) {
-                    if (other != null) {
-                        other.Selected = other == button;
-                    }
-                }
-                Audio.Play("event:/ui/main/rollover_down");
-            }
-            break;
-        }
 
         if (!ConsumePointerTap()) {
             return;
@@ -741,13 +720,9 @@ public sealed class MouseUIModule : EverestModule {
                 pointer.Y >= centerY - hitHeight * 0.5f &&
                 pointer.Y <= centerY + hitHeight * 0.5f) {
 
-                if (menu.Current != item) {
-                    menu.Current?.OnLeave?.Invoke();
-                    menu.Selection = i;
-                    item.OnEnter?.Invoke();
-                    item.SelectWiggler?.Start();
-                    Audio.Play("event:/ui/main/rollover_down");
-                }
+                // Do not mutate TextMenu.Selection on hover. Everest uses
+                // selection to compute menu scrolling, so moving the pointer
+                // must never scroll the menu. Only wheel/swipe changes it.
                 break;
             }
 
@@ -780,6 +755,12 @@ public sealed class MouseUIModule : EverestModule {
                 pointer.Y >= centerY - hitHeight * 0.5f &&
                 pointer.Y <= centerY + hitHeight * 0.5f) {
 
+                if (menu.Selection != i) {
+                    menu.Current?.OnLeave?.Invoke();
+                    menu.Selection = i;
+                    item.OnEnter?.Invoke();
+                }
+
                 item.ConfirmPressed();
                 item.OnPressed?.Invoke();
 
@@ -796,22 +777,6 @@ public sealed class MouseUIModule : EverestModule {
         }
     }
 
-    private sealed class RenderComponent : Component {
-        private readonly Action onRender;
-
-        public RenderComponent(Action onRender) : base(true, true) {
-            this.onRender = onRender;
-        }
-
-        public override void Render() {
-            onRender?.Invoke();
-        }
-    }
-
-    /// <summary>
-    /// Optional runtime binding to MobileBridge. There is deliberately no
-    /// MobileBridge assembly reference in MouseUI.csproj.
-    /// </summary>
     private static class OptionalMobileBridge {
         private const string ApiTypeName = "Celeste.Mod.MobileBridge.MobileBridgeApi";
 

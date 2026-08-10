@@ -46,8 +46,33 @@ public sealed class BetterMapEditorModule : EverestModule {
 
     private static void OnCreateMainMenuButtons(OuiMainMenu menu, List<MenuButton> buttons) {
         Vector2 pos = Vector2.Zero;
-        int index = Math.Max(0, buttons.Count - 1);
-        buttons.Insert(index, new MainMenuSmallButton("MAP EDITOR", "menu/options", menu, pos, pos, () => ShowBrowser(menu)));
+
+        int multiplayerIndex = buttons.FindIndex(button =>
+            button is MainMenuSmallButton small &&
+            string.Equals(
+                small.LabelName,
+                "MOBILEMULTIPLAYER_MAINMENU",
+                StringComparison.OrdinalIgnoreCase));
+
+        int climbIndex = buttons.FindIndex(button =>
+            button is MainMenuClimb);
+
+        int index =
+            multiplayerIndex >= 0
+                ? multiplayerIndex + 1
+                : climbIndex >= 0
+                    ? climbIndex + 1
+                    : 0;
+
+        buttons.Insert(
+            Math.Clamp(index, 0, buttons.Count),
+            new MainMenuSmallButton(
+                "BETTERMAPEDITOR_MAINMENU",
+                "menu/options",
+                menu,
+                pos,
+                pos,
+                () => ShowBrowser(menu)));
     }
 
     private static void OnMainMenuUpdate(On.Celeste.OuiMainMenu.orig_Update orig, OuiMainMenu menu) {
@@ -414,7 +439,7 @@ public sealed class BetterMapEditorModule : EverestModule {
 
         foreach (EditorRoom room in chapter.Rooms) {
             room.Normalize();
-            MapElement level = new("level")
+            MapElement level = new MapElement("level")
                 .Attr("name", room.Name)
                 .Attr("x", roomX)
                 .Attr("y", 0)
@@ -450,12 +475,35 @@ public sealed class BetterMapEditorModule : EverestModule {
             level.Child(new MapElement("bgtiles").Attr("tileset", "Scenery"));
 
             MapElement entities = new("entities");
+
             if (room.HasSpawn) {
-                entities.Child(new MapElement("player")
+                entities.Child(
+                    new MapElement("player")
                     .Attr("id", entityId++)
                     .Attr("x", room.SpawnTileX * 8 + 4)
                     .Attr("y", room.SpawnTileY * 8 + 8));
             }
+
+            foreach (EditorEntity entity in room.Entities) {
+                MapElement element =
+                    new MapElement(entity.Type)
+                    .Attr("id", entityId++)
+                    .Attr("x", entity.TileX * 8 + 4)
+                    .Attr("y", entity.TileY * 8 + 8);
+
+                if (string.Equals(
+                    entity.Type,
+                    "spikesUp",
+                    StringComparison.OrdinalIgnoreCase)) {
+
+                    element
+                        .Attr("width", 8)
+                        .Attr("type", "default");
+                }
+
+                entities.Child(element);
+            }
+
             level.Child(entities);
             level.Child(new MapElement("triggers"));
             level.Child(new MapElement("fgdecals").Attr("tileset", "Scenery"));
@@ -465,7 +513,7 @@ public sealed class BetterMapEditorModule : EverestModule {
             roomX += room.WidthTiles * 8;
         }
 
-        MapElement style = new("Style")
+        MapElement style = new MapElement("Style")
             .Child(new MapElement("Foregrounds"))
             .Child(new MapElement("Backgrounds"));
 
@@ -565,69 +613,256 @@ public sealed class BetterMapEditorModule : EverestModule {
         public bool HasSpawn { get; set; } = true;
         public int SpawnTileX { get; set; } = 3;
         public int SpawnTileY { get; set; } = 20;
+        public List<EditorEntity> Entities { get; set; } = new();
 
         public static EditorRoom CreateDefault(string name) {
-            EditorRoom room = new() { Name = name };
+            EditorRoom room = new() {
+                Name = name
+            };
+
             room.Normalize();
-            char[] floor = room.SolidRows[room.HeightTiles - 1].ToCharArray();
-            for (int x = 0; x < floor.Length; x++)
+
+            char[] floor =
+                room.SolidRows[
+                    room.HeightTiles - 1]
+                .ToCharArray();
+
+            for (int x = 0; x < floor.Length; x++) {
                 floor[x] = '1';
-            room.SolidRows[room.HeightTiles - 1] = new string(floor);
+            }
+
+            room.SolidRows[
+                room.HeightTiles - 1] =
+                new string(floor);
+
             room.SpawnTileX = 3;
-            room.SpawnTileY = Math.Max(1, room.HeightTiles - 3);
+            room.SpawnTileY =
+                Math.Max(
+                    1,
+                    room.HeightTiles - 3);
+
             return room;
         }
 
         public void Normalize() {
-            Name = Slugify(Name).ToLowerInvariant();
-            WidthTiles = Math.Clamp(WidthTiles, 10, 160);
-            HeightTiles = Math.Clamp(HeightTiles, 8, 90);
-            SolidRows ??= new List<string>();
+            Name =
+                Slugify(Name)
+                .ToLowerInvariant();
 
-            while (SolidRows.Count < HeightTiles)
-                SolidRows.Add(new string('0', WidthTiles));
-            if (SolidRows.Count > HeightTiles)
-                SolidRows.RemoveRange(HeightTiles, SolidRows.Count - HeightTiles);
+            WidthTiles =
+                Math.Clamp(
+                    WidthTiles,
+                    10,
+                    160);
 
-            for (int y = 0; y < SolidRows.Count; y++) {
-                string row = SolidRows[y] ?? string.Empty;
-                if (row.Length < WidthTiles)
-                    row += new string('0', WidthTiles - row.Length);
-                if (row.Length > WidthTiles)
-                    row = row.Substring(0, WidthTiles);
-                char[] chars = row.ToCharArray();
-                for (int x = 0; x < chars.Length; x++)
-                    chars[x] = chars[x] == '0' ? '0' : '1';
-                SolidRows[y] = new string(chars);
+            HeightTiles =
+                Math.Clamp(
+                    HeightTiles,
+                    8,
+                    90);
+
+            SolidRows ??=
+                new List<string>();
+
+            Entities ??=
+                new List<EditorEntity>();
+
+            while (SolidRows.Count < HeightTiles) {
+                SolidRows.Add(
+                    new string(
+                        '0',
+                        WidthTiles));
             }
 
-            SpawnTileX = Math.Clamp(SpawnTileX, 0, WidthTiles - 1);
-            SpawnTileY = Math.Clamp(SpawnTileY, 0, HeightTiles - 1);
+            if (SolidRows.Count > HeightTiles) {
+                SolidRows.RemoveRange(
+                    HeightTiles,
+                    SolidRows.Count - HeightTiles);
+            }
+
+            for (int y = 0;
+                y < SolidRows.Count;
+                y++) {
+
+                string row =
+                    SolidRows[y] ??
+                    string.Empty;
+
+                if (row.Length < WidthTiles) {
+                    row +=
+                        new string(
+                            '0',
+                            WidthTiles - row.Length);
+                }
+
+                if (row.Length > WidthTiles) {
+                    row =
+                        row.Substring(
+                            0,
+                            WidthTiles);
+                }
+
+                char[] chars =
+                    row.ToCharArray();
+
+                for (int x = 0;
+                    x < chars.Length;
+                    x++) {
+
+                    chars[x] =
+                        chars[x] == '0'
+                            ? '0'
+                            : '1';
+                }
+
+                SolidRows[y] =
+                    new string(chars);
+            }
+
+            SpawnTileX =
+                Math.Clamp(
+                    SpawnTileX,
+                    0,
+                    WidthTiles - 1);
+
+            SpawnTileY =
+                Math.Clamp(
+                    SpawnTileY,
+                    0,
+                    HeightTiles - 1);
+
+            foreach (EditorEntity entity in
+                Entities) {
+
+                entity.Normalize(
+                    WidthTiles,
+                    HeightTiles);
+            }
         }
 
-        public bool IsSolid(int x, int y) {
-            if (x < 0 || y < 0 || x >= WidthTiles || y >= HeightTiles)
+        public bool IsSolid(
+            int x,
+            int y) {
+
+            if (x < 0 ||
+                y < 0 ||
+                x >= WidthTiles ||
+                y >= HeightTiles) {
+
                 return false;
+            }
+
             return SolidRows[y][x] != '0';
         }
 
-        public void SetSolid(int x, int y, bool solid) {
-            if (x < 0 || y < 0 || x >= WidthTiles || y >= HeightTiles)
+        public void SetSolid(
+            int x,
+            int y,
+            bool solid) {
+
+            if (x < 0 ||
+                y < 0 ||
+                x >= WidthTiles ||
+                y >= HeightTiles) {
+
                 return;
-            char[] row = SolidRows[y].ToCharArray();
-            row[x] = solid ? '1' : '0';
-            SolidRows[y] = new string(row);
+            }
+
+            char[] row =
+                SolidRows[y]
+                .ToCharArray();
+
+            row[x] =
+                solid
+                    ? '1'
+                    : '0';
+
+            SolidRows[y] =
+                new string(row);
         }
 
-        public string GetSolidsText() => string.Join("\n", SolidRows);
-        public string GetEmptyTilesText() => string.Join("\n", Enumerable.Repeat(new string('0', WidthTiles), HeightTiles));
-        public string GetObjectTilesText() => string.Join("\n", Enumerable.Repeat(string.Join(",", Enumerable.Repeat("-1", WidthTiles)), HeightTiles));
+        public string GetSolidsText() {
+            return string.Join(
+                "\n",
+                SolidRows);
+        }
+
+        public string GetEmptyTilesText() {
+            return string.Join(
+                "\n",
+                Enumerable.Repeat(
+                    new string(
+                        '0',
+                        WidthTiles),
+                    HeightTiles));
+        }
+
+        public string GetObjectTilesText() {
+            return string.Join(
+                "\n",
+                Enumerable.Repeat(
+                    string.Join(
+                        ",",
+                        Enumerable.Repeat(
+                            "-1",
+                            WidthTiles)),
+                    HeightTiles));
+        }
+    }
+
+    public sealed class EditorEntity {
+        public string Type { get; set; } =
+            "strawberry";
+
+        public int TileX { get; set; }
+        public int TileY { get; set; }
+
+        public EditorEntity Clone() {
+            return new EditorEntity {
+                Type = Type,
+                TileX = TileX,
+                TileY = TileY
+            };
+        }
+
+        public void Normalize(
+            int roomWidth,
+            int roomHeight) {
+
+            if (Type != "strawberry" &&
+                Type != "spring" &&
+                Type != "spikesUp") {
+
+                Type = "strawberry";
+            }
+
+            TileX =
+                Math.Clamp(
+                    TileX,
+                    0,
+                    Math.Max(
+                        0,
+                        roomWidth - 1));
+
+            TileY =
+                Math.Clamp(
+                    TileY,
+                    0,
+                    Math.Max(
+                        0,
+                        roomHeight - 1));
+        }
     }
 
     private enum EditorTool {
+        Select,
         Solid,
         Erase,
-        Spawn
+        Spawn,
+        Strawberry,
+        Spring,
+        SpikesUp,
+        Pan
     }
 
     private sealed class RoomEditorOverlay : Entity {
@@ -635,181 +870,1485 @@ public sealed class BetterMapEditorModule : EverestModule {
         private readonly EditorProject project;
         private readonly string projectDirectory;
         private readonly EditorChapter chapter;
-        private readonly EditorRoom room;
-        private EditorTool tool = EditorTool.Solid;
+
+        private EditorRoom room;
+        private EditorTool tool =
+            EditorTool.Select;
+
+        private int selectedEntity = -1;
+
+        private readonly Stack<string> undo =
+            new();
+
+        private readonly Stack<string> redo =
+            new();
+
         private bool desktopPainting;
         private bool desktopPaintValue;
+        private bool desktopPanning;
+        private Vector2 lastPanPointer;
 
-        private const float CanvasX = 80f;
-        private const float CanvasY = 150f;
-        private const float CanvasWidth = 1760f;
-        private const float CanvasHeight = 760f;
+        private float zoom = 1f;
+        private Vector2 pan;
+
+        private const float SidebarX = 20f;
+        private const float SidebarY = 125f;
+        private const float SidebarWidth = 265f;
+        private const float SidebarHeight = 735f;
+
+        private const float CanvasX = 315f;
+        private const float CanvasY = 125f;
+        private const float CanvasWidth = 1580f;
+        private const float CanvasHeight = 735f;
 
         private readonly ToolbarButton[] toolbar;
 
-        public RoomEditorOverlay(OuiMainMenu owner, EditorProject project, string projectDirectory, EditorChapter chapter, EditorRoom room)
+        public RoomEditorOverlay(
+            OuiMainMenu owner,
+            EditorProject project,
+            string projectDirectory,
+            EditorChapter chapter,
+            EditorRoom room)
             : base(Vector2.Zero) {
+
             this.owner = owner;
             this.project = project;
-            this.projectDirectory = projectDirectory;
+            this.projectDirectory =
+                projectDirectory;
             this.chapter = chapter;
             this.room = room;
-            room.Normalize();
-            Tag = Tags.HUD | Tags.PauseUpdate;
+
+            this.room.Normalize();
+
+            Tag =
+                Tags.HUD |
+                Tags.PauseUpdate;
+
             Depth = -2000000;
 
             toolbar = new[] {
-                new ToolbarButton("SOLID", 80, 960, 220, 70, () => tool = EditorTool.Solid),
-                new ToolbarButton("ERASE", 320, 960, 220, 70, () => tool = EditorTool.Erase),
-                new ToolbarButton("SPAWN", 560, 960, 220, 70, () => tool = EditorTool.Spawn),
-                new ToolbarButton("+ WIDTH", 820, 960, 220, 70, () => ResizeRoom(1, 0)),
-                new ToolbarButton("+ HEIGHT", 1060, 960, 220, 70, () => ResizeRoom(0, 1)),
-                new ToolbarButton("SAVE", 1360, 960, 200, 70, Save),
-                new ToolbarButton("BACK", 1590, 960, 250, 70, Back)
+                new ToolbarButton(
+                    "SELECT",
+                    315,
+                    885,
+                    175,
+                    62,
+                    () => SetTool(EditorTool.Select)),
+                new ToolbarButton(
+                    "SOLID",
+                    500,
+                    885,
+                    155,
+                    62,
+                    () => SetTool(EditorTool.Solid)),
+                new ToolbarButton(
+                    "ERASE",
+                    665,
+                    885,
+                    155,
+                    62,
+                    () => SetTool(EditorTool.Erase)),
+                new ToolbarButton(
+                    "SPAWN",
+                    830,
+                    885,
+                    155,
+                    62,
+                    () => SetTool(EditorTool.Spawn)),
+                new ToolbarButton(
+                    "BERRY",
+                    995,
+                    885,
+                    155,
+                    62,
+                    () => SetTool(EditorTool.Strawberry)),
+                new ToolbarButton(
+                    "SPRING",
+                    1160,
+                    885,
+                    155,
+                    62,
+                    () => SetTool(EditorTool.Spring)),
+                new ToolbarButton(
+                    "SPIKES",
+                    1325,
+                    885,
+                    155,
+                    62,
+                    () => SetTool(EditorTool.SpikesUp)),
+                new ToolbarButton(
+                    "PAN",
+                    1490,
+                    885,
+                    155,
+                    62,
+                    () => SetTool(EditorTool.Pan)),
+                new ToolbarButton(
+                    "UNDO",
+                    315,
+                    960,
+                    155,
+                    62,
+                    Undo),
+                new ToolbarButton(
+                    "REDO",
+                    480,
+                    960,
+                    155,
+                    62,
+                    Redo),
+                new ToolbarButton(
+                    "ZOOM -",
+                    645,
+                    960,
+                    155,
+                    62,
+                    () => ChangeZoom(-0.15f)),
+                new ToolbarButton(
+                    "ZOOM +",
+                    810,
+                    960,
+                    155,
+                    62,
+                    () => ChangeZoom(0.15f)),
+                new ToolbarButton(
+                    "- W",
+                    975,
+                    960,
+                    120,
+                    62,
+                    () => ResizeRoom(-1, 0)),
+                new ToolbarButton(
+                    "+ W",
+                    1105,
+                    960,
+                    120,
+                    62,
+                    () => ResizeRoom(1, 0)),
+                new ToolbarButton(
+                    "- H",
+                    1235,
+                    960,
+                    120,
+                    62,
+                    () => ResizeRoom(0, -1)),
+                new ToolbarButton(
+                    "+ H",
+                    1365,
+                    960,
+                    120,
+                    62,
+                    () => ResizeRoom(0, 1)),
+                new ToolbarButton(
+                    "SAVE",
+                    1495,
+                    960,
+                    175,
+                    62,
+                    Save),
+                new ToolbarButton(
+                    "BACK",
+                    1680,
+                    960,
+                    195,
+                    62,
+                    Back)
             };
         }
 
         public override void Update() {
             base.Update();
 
-            if (Input.MenuCancel.Pressed || MInput.Keyboard.Pressed(Keys.Escape)) {
+            if (Input.MenuCancel.Pressed ||
+                MInput.Keyboard.Pressed(
+                    Keys.Escape)) {
+
                 Back();
                 return;
             }
 
-            if (MInput.Keyboard.Pressed(Keys.D1)) tool = EditorTool.Solid;
-            if (MInput.Keyboard.Pressed(Keys.D2)) tool = EditorTool.Erase;
-            if (MInput.Keyboard.Pressed(Keys.D3)) tool = EditorTool.Spawn;
-            if (MInput.Keyboard.Pressed(Keys.S) && (MInput.Keyboard.Check(Keys.LeftControl) || MInput.Keyboard.Check(Keys.RightControl))) Save();
+            HandleKeyboardShortcuts();
 
-            Vector2 pointer = new(MInput.Mouse.X, MInput.Mouse.Y);
-            bool desktopPress = MInput.Mouse.PressedLeftButton;
-            bool desktopHeld = MInput.Mouse.CheckLeftButton;
-            bool desktopRelease = MInput.Mouse.ReleasedLeftButton;
+            Vector2 pointer =
+                new(
+                    MInput.Mouse.X,
+                    MInput.Mouse.Y);
 
-            if (desktopPress) {
-                if (TryToolbar(pointer))
-                    return;
+            float wheel =
+                MInput.Mouse.WheelDelta;
 
-                if (TryGetCell(pointer, out int cx, out int cy)) {
-                    if (tool == EditorTool.Spawn) {
-                        room.HasSpawn = true;
-                        room.SpawnTileX = cx;
-                        room.SpawnTileY = cy;
-                    } else {
-                        desktopPainting = true;
-                        desktopPaintValue = tool == EditorTool.Solid;
-                        room.SetSolid(cx, cy, desktopPaintValue);
-                    }
-                }
-            } else if (desktopHeld && desktopPainting && TryGetCell(pointer, out int cx, out int cy)) {
-                room.SetSolid(cx, cy, desktopPaintValue);
+            if (Math.Abs(wheel) >= 120f &&
+                IsInsideCanvas(pointer)) {
+
+                ChangeZoom(
+                    wheel > 0f
+                        ? 0.12f
+                        : -0.12f);
             }
 
-            if (desktopRelease)
-                desktopPainting = false;
+            bool desktopPress =
+                MInput.Mouse.PressedLeftButton;
 
-            if (OptionalMobileBridge.TouchAvailable && OptionalMobileBridge.ConsumeTouchTap()) {
-                Vector2 touch = OptionalMobileBridge.TouchPosition;
-                if (TryToolbar(touch))
+            bool desktopHeld =
+                MInput.Mouse.CheckLeftButton;
+
+            bool desktopRelease =
+                MInput.Mouse.ReleasedLeftButton;
+
+            bool panModifier =
+                MInput.Keyboard.Check(
+                    Keys.Space);
+
+            if (desktopPress) {
+                if (TryToolbar(pointer)) {
                     return;
-                if (TryGetCell(touch, out int tx, out int ty)) {
-                    if (tool == EditorTool.Spawn) {
-                        room.HasSpawn = true;
-                        room.SpawnTileX = tx;
-                        room.SpawnTileY = ty;
-                    } else {
-                        room.SetSolid(tx, ty, tool == EditorTool.Solid);
+                }
+
+                if (TrySidebar(pointer)) {
+                    return;
+                }
+
+                if ((tool == EditorTool.Pan ||
+                     panModifier) &&
+                    IsInsideCanvas(pointer)) {
+
+                    desktopPanning = true;
+                    lastPanPointer = pointer;
+                    return;
+                }
+
+                HandleCanvasPress(
+                    pointer,
+                    beginContinuousEdit: true);
+            } else if (desktopHeld) {
+                if (desktopPanning) {
+                    Vector2 delta =
+                        pointer -
+                        lastPanPointer;
+
+                    pan += delta;
+                    lastPanPointer =
+                        pointer;
+                } else if (desktopPainting &&
+                    TryGetCell(
+                        pointer,
+                        out int x,
+                        out int y)) {
+
+                    room.SetSolid(
+                        x,
+                        y,
+                        desktopPaintValue);
+                }
+            }
+
+            if (desktopRelease) {
+                desktopPainting = false;
+                desktopPanning = false;
+            }
+
+            if (OptionalMobileBridge.TouchAvailable) {
+                float touchScroll =
+                    OptionalMobileBridge
+                        .ConsumeTouchScroll();
+
+                if (Math.Abs(touchScroll) > 12f) {
+                    // MobileBridge swipe scrolling pans the editor instead of
+                    // changing the selected tool / room.
+                    pan.Y +=
+                        Math.Sign(touchScroll) *
+                        70f;
+                }
+
+                if (OptionalMobileBridge
+                    .ConsumeTouchTap()) {
+
+                    Vector2 touch =
+                        OptionalMobileBridge
+                            .TouchPosition;
+
+                    if (TryToolbar(touch) ||
+                        TrySidebar(touch)) {
+
+                        return;
                     }
+
+                    HandleCanvasPress(
+                        touch,
+                        beginContinuousEdit: false);
                 }
             }
         }
 
         public override void Render() {
-            Draw.Rect(0, 0, 1920, 1080, Color.Black * 0.94f);
-            ActiveFont.DrawOutline($"{project.Name}  /  {chapter.Name}  /  {room.Name}", new Vector2(960, 50), new Vector2(0.5f, 0.5f), Vector2.One * 0.8f, Color.White, 2f, Color.Black);
-            ActiveFont.DrawOutline("1 SOLID   2 ERASE   3 SPAWN   CTRL+S SAVE", new Vector2(960, 105), new Vector2(0.5f, 0.5f), Vector2.One * 0.45f, Color.LightGray, 2f, Color.Black);
+            Draw.Rect(
+                0f,
+                0f,
+                1920f,
+                1080f,
+                Color.Black * 0.94f);
 
-            float cell = GetCellSize();
-            float width = room.WidthTiles * cell;
-            float height = room.HeightTiles * cell;
-            float ox = CanvasX + (CanvasWidth - width) * 0.5f;
-            float oy = CanvasY + (CanvasHeight - height) * 0.5f;
+            ActiveFont.DrawOutline(
+                $"{project.Name}  /  {chapter.Name}",
+                new Vector2(
+                    960f,
+                    40f),
+                new Vector2(
+                    0.5f,
+                    0.5f),
+                Vector2.One * 0.72f,
+                Color.White,
+                2f,
+                Color.Black);
 
-            Draw.Rect(ox - 4, oy - 4, width + 8, height + 8, Color.White);
-            Draw.Rect(ox, oy, width, height, new Color(34, 38, 50));
+            ActiveFont.DrawOutline(
+                $"{room.Name}    {room.WidthTiles * 8} x {room.HeightTiles * 8}px    ZOOM {zoom:0.00}x",
+                new Vector2(
+                    960f,
+                    88f),
+                new Vector2(
+                    0.5f,
+                    0.5f),
+                Vector2.One * 0.42f,
+                Color.LightGray,
+                2f,
+                Color.Black);
 
-            for (int y = 0; y < room.HeightTiles; y++) {
-                for (int x = 0; x < room.WidthTiles; x++) {
-                    float px = ox + x * cell;
-                    float py = oy + y * cell;
-                    if (room.IsSolid(x, y))
-                        Draw.Rect(px + 1, py + 1, Math.Max(1, cell - 2), Math.Max(1, cell - 2), new Color(120, 104, 92));
-                    if (cell >= 8f) {
-                        Draw.Line(new Vector2(px, py), new Vector2(px + cell, py), Color.White * 0.08f);
-                        Draw.Line(new Vector2(px, py), new Vector2(px, py + cell), Color.White * 0.08f);
+            RenderSidebar();
+            RenderCanvas();
+
+            foreach (ToolbarButton button in
+                toolbar) {
+
+                button.Render(tool);
+            }
+
+            ActiveFont.DrawOutline(
+                "CTRL+S SAVE   CTRL+Z/Y UNDO/REDO   SPACE+DRAG PAN   WHEEL ZOOM   DELETE ENTITY",
+                new Vector2(
+                    960f,
+                    1048f),
+                new Vector2(
+                    0.5f,
+                    0.5f),
+                Vector2.One * 0.33f,
+                Color.Gray,
+                2f,
+                Color.Black);
+        }
+
+        private void HandleKeyboardShortcuts() {
+            bool ctrl =
+                MInput.Keyboard.Check(
+                    Keys.LeftControl) ||
+                MInput.Keyboard.Check(
+                    Keys.RightControl);
+
+            if (ctrl &&
+                MInput.Keyboard.Pressed(
+                    Keys.S)) {
+
+                Save();
+            }
+
+            if (ctrl &&
+                MInput.Keyboard.Pressed(
+                    Keys.Z)) {
+
+                Undo();
+            }
+
+            if (ctrl &&
+                MInput.Keyboard.Pressed(
+                    Keys.Y)) {
+
+                Redo();
+            }
+
+            if (MInput.Keyboard.Pressed(
+                Keys.Delete)) {
+
+                DeleteSelectedEntity();
+            }
+
+            if (MInput.Keyboard.Pressed(Keys.D1)) {
+                SetTool(EditorTool.Select);
+            }
+
+            if (MInput.Keyboard.Pressed(Keys.D2)) {
+                SetTool(EditorTool.Solid);
+            }
+
+            if (MInput.Keyboard.Pressed(Keys.D3)) {
+                SetTool(EditorTool.Erase);
+            }
+
+            if (MInput.Keyboard.Pressed(Keys.D4)) {
+                SetTool(EditorTool.Spawn);
+            }
+        }
+
+        private void SetTool(
+            EditorTool newTool) {
+
+            tool = newTool;
+
+            if (tool != EditorTool.Select) {
+                selectedEntity = -1;
+            }
+        }
+
+        private void HandleCanvasPress(
+            Vector2 pointer,
+            bool beginContinuousEdit) {
+
+            if (!TryGetCell(
+                pointer,
+                out int x,
+                out int y)) {
+
+                if (tool == EditorTool.Select) {
+                    selectedEntity = -1;
+                }
+
+                return;
+            }
+
+            switch (tool) {
+                case EditorTool.Solid:
+                    PushUndo();
+                    room.SetSolid(
+                        x,
+                        y,
+                        true);
+
+                    if (beginContinuousEdit) {
+                        desktopPainting = true;
+                        desktopPaintValue = true;
+                    }
+                    break;
+
+                case EditorTool.Erase:
+                    PushUndo();
+
+                    int entityIndex =
+                        FindEntityAt(
+                            x,
+                            y);
+
+                    if (entityIndex >= 0) {
+                        room.Entities.RemoveAt(
+                            entityIndex);
+
+                        selectedEntity = -1;
+                    } else if (
+                        room.HasSpawn &&
+                        room.SpawnTileX == x &&
+                        room.SpawnTileY == y) {
+
+                        room.HasSpawn = false;
+                    } else {
+                        room.SetSolid(
+                            x,
+                            y,
+                            false);
+
+                        if (beginContinuousEdit) {
+                            desktopPainting = true;
+                            desktopPaintValue = false;
+                        }
+                    }
+                    break;
+
+                case EditorTool.Spawn:
+                    PushUndo();
+                    room.HasSpawn = true;
+                    room.SpawnTileX = x;
+                    room.SpawnTileY = y;
+                    selectedEntity = -1;
+                    break;
+
+                case EditorTool.Strawberry:
+                    PlaceEntity(
+                        "strawberry",
+                        x,
+                        y);
+                    break;
+
+                case EditorTool.Spring:
+                    PlaceEntity(
+                        "spring",
+                        x,
+                        y);
+                    break;
+
+                case EditorTool.SpikesUp:
+                    PlaceEntity(
+                        "spikesUp",
+                        x,
+                        y);
+                    break;
+
+                case EditorTool.Select:
+                    int hit =
+                        FindEntityAt(
+                            x,
+                            y);
+
+                    if (hit >= 0) {
+                        selectedEntity = hit;
+                    } else if (selectedEntity >= 0 &&
+                        selectedEntity < room.Entities.Count) {
+
+                        PushUndo();
+
+                        room.Entities[
+                            selectedEntity]
+                            .TileX = x;
+
+                        room.Entities[
+                            selectedEntity]
+                            .TileY = y;
+                    } else {
+                        selectedEntity = -1;
+                    }
+                    break;
+
+                case EditorTool.Pan:
+                    break;
+            }
+        }
+
+        private void PlaceEntity(
+            string type,
+            int x,
+            int y) {
+
+            PushUndo();
+
+            room.Entities.Add(
+                new EditorEntity {
+                    Type = type,
+                    TileX = x,
+                    TileY = y
+                });
+
+            selectedEntity =
+                room.Entities.Count - 1;
+
+            tool =
+                EditorTool.Select;
+        }
+
+        private int FindEntityAt(
+            int x,
+            int y) {
+
+            for (int i =
+                    room.Entities.Count - 1;
+                i >= 0;
+                i--) {
+
+                EditorEntity entity =
+                    room.Entities[i];
+
+                if (entity.TileX == x &&
+                    entity.TileY == y) {
+
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private void DeleteSelectedEntity() {
+            if (selectedEntity < 0 ||
+                selectedEntity >=
+                    room.Entities.Count) {
+
+                return;
+            }
+
+            PushUndo();
+
+            room.Entities.RemoveAt(
+                selectedEntity);
+
+            selectedEntity = -1;
+        }
+
+        private void RenderSidebar() {
+            Draw.Rect(
+                SidebarX,
+                SidebarY,
+                SidebarWidth,
+                SidebarHeight,
+                new Color(
+                    21,
+                    24,
+                    33));
+
+            Draw.HollowRect(
+                SidebarX,
+                SidebarY,
+                SidebarWidth,
+                SidebarHeight,
+                Color.White * 0.6f);
+
+            ActiveFont.DrawOutline(
+                "ROOMS",
+                new Vector2(
+                    SidebarX +
+                        SidebarWidth * 0.5f,
+                    SidebarY + 28f),
+                new Vector2(
+                    0.5f,
+                    0.5f),
+                Vector2.One * 0.45f,
+                Color.White,
+                2f,
+                Color.Black);
+
+            float y =
+                SidebarY + 65f;
+
+            const float rowHeight =
+                52f;
+
+            int maxRows =
+                Math.Max(
+                    1,
+                    (int)(
+                        (SidebarHeight - 150f) /
+                        rowHeight));
+
+            int currentIndex =
+                Math.Max(
+                    0,
+                    chapter.Rooms.IndexOf(room));
+
+            int first =
+                Math.Clamp(
+                    currentIndex -
+                    maxRows / 2,
+                    0,
+                    Math.Max(
+                        0,
+                        chapter.Rooms.Count -
+                        maxRows));
+
+            for (int i = first;
+                i < chapter.Rooms.Count &&
+                i < first + maxRows;
+                i++) {
+
+                EditorRoom candidate =
+                    chapter.Rooms[i];
+
+                Rectangle row =
+                    GetSidebarRoomRect(
+                        i - first);
+
+                bool active =
+                    ReferenceEquals(
+                        candidate,
+                        room);
+
+                Draw.Rect(
+                    row.X,
+                    row.Y,
+                    row.Width,
+                    row.Height,
+                    active
+                        ? Color.White * 0.22f
+                        : Color.White * 0.06f);
+
+                ActiveFont.DrawOutline(
+                    candidate.Name,
+                    new Vector2(
+                        row.X + 12f,
+                        row.Center.Y),
+                    new Vector2(
+                        0f,
+                        0.5f),
+                    Vector2.One * 0.36f,
+                    Color.White,
+                    2f,
+                    Color.Black);
+            }
+
+            Rectangle delete =
+                GetDeleteRoomRect();
+
+            Draw.Rect(
+                delete.X,
+                delete.Y,
+                delete.Width,
+                delete.Height,
+                Color.Red * 0.10f);
+
+            Draw.HollowRect(
+                delete.X,
+                delete.Y,
+                delete.Width,
+                delete.Height,
+                Color.White * 0.40f);
+
+            ActiveFont.DrawOutline(
+                "- DELETE ROOM",
+                new Vector2(
+                    delete.Center.X,
+                    delete.Center.Y),
+                new Vector2(
+                    0.5f,
+                    0.5f),
+                Vector2.One * 0.34f,
+                chapter.Rooms.Count > 1
+                    ? Color.White
+                    : Color.Gray,
+                2f,
+                Color.Black);
+
+            Rectangle add =
+                GetAddRoomRect();
+
+            Draw.Rect(
+                add.X,
+                add.Y,
+                add.Width,
+                add.Height,
+                Color.White * 0.10f);
+
+            Draw.HollowRect(
+                add.X,
+                add.Y,
+                add.Width,
+                add.Height,
+                Color.White * 0.55f);
+
+            ActiveFont.DrawOutline(
+                "+ NEW ROOM",
+                new Vector2(
+                    add.Center.X,
+                    add.Center.Y),
+                new Vector2(
+                    0.5f,
+                    0.5f),
+                Vector2.One * 0.38f,
+                Color.White,
+                2f,
+                Color.Black);
+        }
+
+        private bool TrySidebar(
+            Vector2 pointer) {
+
+            if (pointer.X < SidebarX ||
+                pointer.X >
+                    SidebarX +
+                    SidebarWidth ||
+                pointer.Y < SidebarY ||
+                pointer.Y >
+                    SidebarY +
+                    SidebarHeight) {
+
+                return false;
+            }
+
+            Rectangle delete =
+                GetDeleteRoomRect();
+
+            if (delete.Contains(
+                (int)pointer.X,
+                (int)pointer.Y)) {
+
+                DeleteCurrentRoom();
+                return true;
+            }
+
+            Rectangle add =
+                GetAddRoomRect();
+
+            if (add.Contains(
+                (int)pointer.X,
+                (int)pointer.Y)) {
+
+                AddRoom();
+                return true;
+            }
+
+            const float rowHeight =
+                52f;
+
+            int maxRows =
+                Math.Max(
+                    1,
+                    (int)(
+                        (SidebarHeight - 150f) /
+                        rowHeight));
+
+            int currentIndex =
+                Math.Max(
+                    0,
+                    chapter.Rooms.IndexOf(room));
+
+            int first =
+                Math.Clamp(
+                    currentIndex -
+                    maxRows / 2,
+                    0,
+                    Math.Max(
+                        0,
+                        chapter.Rooms.Count -
+                        maxRows));
+
+            for (int local = 0;
+                local < maxRows;
+                local++) {
+
+                int index =
+                    first + local;
+
+                if (index >=
+                    chapter.Rooms.Count) {
+
+                    break;
+                }
+
+                Rectangle row =
+                    GetSidebarRoomRect(
+                        local);
+
+                if (row.Contains(
+                    (int)pointer.X,
+                    (int)pointer.Y)) {
+
+                    SwitchRoom(
+                        chapter.Rooms[index]);
+
+                    return true;
+                }
+            }
+
+            return true;
+        }
+
+        private static Rectangle GetSidebarRoomRect(
+            int localIndex) {
+
+            return new Rectangle(
+                (int)SidebarX + 10,
+                (int)SidebarY +
+                    58 +
+                    localIndex * 52,
+                (int)SidebarWidth - 20,
+                46);
+        }
+
+        private static Rectangle GetDeleteRoomRect() {
+            return new Rectangle(
+                (int)SidebarX + 10,
+                (int)(
+                    SidebarY +
+                    SidebarHeight -
+                    124f),
+                (int)SidebarWidth - 20,
+                50);
+        }
+
+        private static Rectangle GetAddRoomRect() {
+            return new Rectangle(
+                (int)SidebarX + 10,
+                (int)(
+                    SidebarY +
+                    SidebarHeight -
+                    66f),
+                (int)SidebarWidth - 20,
+                52);
+        }
+
+        private void DeleteCurrentRoom() {
+            if (chapter.Rooms.Count <= 1) {
+                Audio.Play(
+                    "event:/ui/main/button_invalid");
+                return;
+            }
+
+            int index =
+                chapter.Rooms.IndexOf(room);
+
+            if (index < 0) {
+                return;
+            }
+
+            chapter.Rooms.RemoveAt(index);
+
+            room =
+                chapter.Rooms[
+                    Math.Clamp(
+                        index,
+                        0,
+                        chapter.Rooms.Count - 1)];
+
+            room.Normalize();
+            selectedEntity = -1;
+            ResetViewport();
+            ClearHistory();
+            SaveCurrentProjectOnly();
+
+            Audio.Play(
+                "event:/ui/main/button_select");
+        }
+
+        private void AddRoom() {
+            SaveCurrentProjectOnly();
+
+            string name =
+                MakeUniqueRoomName(
+                    chapter,
+                    $"room_{chapter.Rooms.Count + 1}");
+
+            EditorRoom created =
+                EditorRoom.CreateDefault(
+                    name);
+
+            chapter.Rooms.Add(
+                created);
+
+            room = created;
+            selectedEntity = -1;
+            ResetViewport();
+            ClearHistory();
+            SaveCurrentProjectOnly();
+
+            Audio.Play(
+                "event:/ui/main/button_select");
+        }
+
+        private void SwitchRoom(
+            EditorRoom target) {
+
+            if (target == null ||
+                ReferenceEquals(
+                    target,
+                    room)) {
+
+                return;
+            }
+
+            SaveCurrentProjectOnly();
+
+            room = target;
+            room.Normalize();
+            selectedEntity = -1;
+            ResetViewport();
+            ClearHistory();
+
+            Audio.Play(
+                "event:/ui/main/rollover_down");
+        }
+
+        private void RenderCanvas() {
+            Draw.Rect(
+                CanvasX,
+                CanvasY,
+                CanvasWidth,
+                CanvasHeight,
+                new Color(
+                    15,
+                    17,
+                    24));
+
+            Draw.HollowRect(
+                CanvasX,
+                CanvasY,
+                CanvasWidth,
+                CanvasHeight,
+                Color.White * 0.45f);
+
+            GetCanvasTransform(
+                out float cell,
+                out float originX,
+                out float originY);
+
+            float roomWidth =
+                room.WidthTiles * cell;
+
+            float roomHeight =
+                room.HeightTiles * cell;
+
+            Draw.Rect(
+                originX - 4f,
+                originY - 4f,
+                roomWidth + 8f,
+                roomHeight + 8f,
+                Color.White * 0.8f);
+
+            Draw.Rect(
+                originX,
+                originY,
+                roomWidth,
+                roomHeight,
+                new Color(
+                    34,
+                    38,
+                    50));
+
+            for (int y = 0;
+                y < room.HeightTiles;
+                y++) {
+
+                for (int x = 0;
+                    x < room.WidthTiles;
+                    x++) {
+
+                    float px =
+                        originX +
+                        x * cell;
+
+                    float py =
+                        originY +
+                        y * cell;
+
+                    if (room.IsSolid(
+                        x,
+                        y)) {
+
+                        Draw.Rect(
+                            px + 1f,
+                            py + 1f,
+                            Math.Max(
+                                1f,
+                                cell - 2f),
+                            Math.Max(
+                                1f,
+                                cell - 2f),
+                            new Color(
+                                120,
+                                104,
+                                92));
+                    }
+
+                    if (cell >= 7f) {
+                        Draw.Line(
+                            new Vector2(
+                                px,
+                                py),
+                            new Vector2(
+                                px + cell,
+                                py),
+                            Color.White * 0.07f);
+
+                        Draw.Line(
+                            new Vector2(
+                                px,
+                                py),
+                            new Vector2(
+                                px,
+                                py + cell),
+                            Color.White * 0.07f);
                     }
                 }
             }
 
             if (room.HasSpawn) {
-                float sx = ox + room.SpawnTileX * cell + cell * 0.5f;
-                float sy = oy + room.SpawnTileY * cell + cell * 0.5f;
-                Draw.Circle(new Vector2(sx, sy), Math.Max(4f, cell * 0.3f), Color.Cyan, 16);
-                Draw.Line(new Vector2(sx - cell * 0.25f, sy), new Vector2(sx + cell * 0.25f, sy), Color.Black, 2f);
-                Draw.Line(new Vector2(sx, sy - cell * 0.25f), new Vector2(sx, sy + cell * 0.25f), Color.Black, 2f);
+                DrawEntityMarker(
+                    room.SpawnTileX,
+                    room.SpawnTileY,
+                    cell,
+                    originX,
+                    originY,
+                    Color.Cyan,
+                    "P",
+                    false);
             }
 
-            foreach (ToolbarButton button in toolbar)
-                button.Render(tool);
+            for (int i = 0;
+                i < room.Entities.Count;
+                i++) {
+
+                EditorEntity entity =
+                    room.Entities[i];
+
+                Color color =
+                    entity.Type switch {
+                        "strawberry" =>
+                            Color.Red,
+                        "spring" =>
+                            Color.LimeGreen,
+                        "spikesUp" =>
+                            Color.LightGray,
+                        _ =>
+                            Color.Magenta
+                    };
+
+                string marker =
+                    entity.Type switch {
+                        "strawberry" =>
+                            "B",
+                        "spring" =>
+                            "S",
+                        "spikesUp" =>
+                            "^",
+                        _ =>
+                            "?"
+                    };
+
+                DrawEntityMarker(
+                    entity.TileX,
+                    entity.TileY,
+                    cell,
+                    originX,
+                    originY,
+                    color,
+                    marker,
+                    i == selectedEntity);
+            }
         }
 
-        private float GetCellSize() => Math.Min(CanvasWidth / room.WidthTiles, CanvasHeight / room.HeightTiles);
+        private static void DrawEntityMarker(
+            int tileX,
+            int tileY,
+            float cell,
+            float originX,
+            float originY,
+            Color color,
+            string marker,
+            bool selected) {
 
-        private bool TryGetCell(Vector2 pointer, out int x, out int y) {
-            float cell = GetCellSize();
-            float width = room.WidthTiles * cell;
-            float height = room.HeightTiles * cell;
-            float ox = CanvasX + (CanvasWidth - width) * 0.5f;
-            float oy = CanvasY + (CanvasHeight - height) * 0.5f;
+            float x =
+                originX +
+                tileX * cell +
+                cell * 0.5f;
 
-            if (pointer.X < ox || pointer.Y < oy || pointer.X >= ox + width || pointer.Y >= oy + height) {
-                x = y = -1;
+            float y =
+                originY +
+                tileY * cell +
+                cell * 0.5f;
+
+            float radius =
+                Math.Max(
+                    5f,
+                    Math.Min(
+                        15f,
+                        cell * 0.34f));
+
+            Draw.Circle(
+                new Vector2(x, y),
+                radius,
+                color,
+                16);
+
+            if (selected) {
+                Draw.Circle(
+                    new Vector2(x, y),
+                    radius + 5f,
+                    Color.Yellow,
+                    16);
+            }
+
+            if (cell >= 15f) {
+                ActiveFont.DrawOutline(
+                    marker,
+                    new Vector2(x, y),
+                    new Vector2(
+                        0.5f,
+                        0.5f),
+                    Vector2.One *
+                        Math.Min(
+                            0.32f,
+                            cell / 90f),
+                    Color.Black,
+                    1f,
+                    Color.White);
+            }
+        }
+
+        private bool IsInsideCanvas(
+            Vector2 pointer) {
+
+            return pointer.X >= CanvasX &&
+                pointer.X <=
+                    CanvasX + CanvasWidth &&
+                pointer.Y >= CanvasY &&
+                pointer.Y <=
+                    CanvasY + CanvasHeight;
+        }
+
+        private void GetCanvasTransform(
+            out float cell,
+            out float originX,
+            out float originY) {
+
+            float fit =
+                Math.Min(
+                    CanvasWidth /
+                        room.WidthTiles,
+                    CanvasHeight /
+                        room.HeightTiles);
+
+            cell =
+                Math.Max(
+                    2f,
+                    fit * zoom);
+
+            float width =
+                room.WidthTiles *
+                cell;
+
+            float height =
+                room.HeightTiles *
+                cell;
+
+            originX =
+                CanvasX +
+                (CanvasWidth - width) *
+                    0.5f +
+                pan.X;
+
+            originY =
+                CanvasY +
+                (CanvasHeight - height) *
+                    0.5f +
+                pan.Y;
+        }
+
+        private bool TryGetCell(
+            Vector2 pointer,
+            out int x,
+            out int y) {
+
+            GetCanvasTransform(
+                out float cell,
+                out float originX,
+                out float originY);
+
+            float width =
+                room.WidthTiles *
+                cell;
+
+            float height =
+                room.HeightTiles *
+                cell;
+
+            if (pointer.X < originX ||
+                pointer.Y < originY ||
+                pointer.X >=
+                    originX + width ||
+                pointer.Y >=
+                    originY + height) {
+
+                x = -1;
+                y = -1;
                 return false;
             }
 
-            x = Math.Clamp((int)((pointer.X - ox) / cell), 0, room.WidthTiles - 1);
-            y = Math.Clamp((int)((pointer.Y - oy) / cell), 0, room.HeightTiles - 1);
+            x =
+                Math.Clamp(
+                    (int)(
+                        (pointer.X -
+                         originX) /
+                        cell),
+                    0,
+                    room.WidthTiles - 1);
+
+            y =
+                Math.Clamp(
+                    (int)(
+                        (pointer.Y -
+                         originY) /
+                        cell),
+                    0,
+                    room.HeightTiles - 1);
+
             return true;
         }
 
-        private bool TryToolbar(Vector2 pointer) {
-            foreach (ToolbarButton button in toolbar) {
+        private bool TryToolbar(
+            Vector2 pointer) {
+
+            foreach (ToolbarButton button in
+                toolbar) {
+
                 if (button.Contains(pointer)) {
-                    Audio.Play("event:/ui/main/button_select");
+                    Audio.Play(
+                        "event:/ui/main/button_select");
+
                     button.Action();
                     return true;
                 }
             }
+
             return false;
         }
 
-        private void ResizeRoom(int dw, int dh) {
-            room.WidthTiles = Math.Clamp(room.WidthTiles + dw, 10, 160);
-            room.HeightTiles = Math.Clamp(room.HeightTiles + dh, 8, 90);
+        private void ResizeRoom(
+            int deltaWidth,
+            int deltaHeight) {
+
+            PushUndo();
+
+            room.WidthTiles =
+                Math.Clamp(
+                    room.WidthTiles +
+                        deltaWidth,
+                    10,
+                    160);
+
+            room.HeightTiles =
+                Math.Clamp(
+                    room.HeightTiles +
+                        deltaHeight,
+                    8,
+                    90);
+
             room.Normalize();
         }
 
+        private void ChangeZoom(
+            float delta) {
+
+            zoom =
+                Math.Clamp(
+                    zoom + delta,
+                    0.35f,
+                    4f);
+        }
+
+        private void ResetViewport() {
+            zoom = 1f;
+            pan = Vector2.Zero;
+        }
+
+        private void PushUndo() {
+            undo.Push(
+                SerializeRoom(room));
+
+            while (undo.Count > 80) {
+                string[] items =
+                    undo.ToArray();
+
+                undo.Clear();
+
+                for (int i =
+                        items.Length - 2;
+                    i >= 0;
+                    i--) {
+
+                    undo.Push(
+                        items[i]);
+                }
+            }
+
+            redo.Clear();
+        }
+
+        private void Undo() {
+            if (undo.Count == 0) {
+                return;
+            }
+
+            redo.Push(
+                SerializeRoom(room));
+
+            RestoreRoom(
+                undo.Pop());
+        }
+
+        private void Redo() {
+            if (redo.Count == 0) {
+                return;
+            }
+
+            undo.Push(
+                SerializeRoom(room));
+
+            RestoreRoom(
+                redo.Pop());
+        }
+
+        private void ClearHistory() {
+            undo.Clear();
+            redo.Clear();
+        }
+
+        private static string SerializeRoom(
+            EditorRoom source) {
+
+            return JsonSerializer.Serialize(
+                source,
+                JsonOptions);
+        }
+
+        private void RestoreRoom(
+            string json) {
+
+            EditorRoom restored =
+                JsonSerializer.Deserialize<
+                    EditorRoom>(
+                    json,
+                    JsonOptions);
+
+            if (restored == null) {
+                return;
+            }
+
+            restored.Normalize();
+
+            int index =
+                chapter.Rooms.IndexOf(
+                    room);
+
+            if (index >= 0) {
+                chapter.Rooms[index] =
+                    restored;
+            }
+
+            room = restored;
+            selectedEntity = -1;
+        }
+
+        private void SaveCurrentProjectOnly() {
+            room.Normalize();
+
+            SaveProject(
+                project,
+                projectDirectory);
+        }
+
         private void Save() {
-            SaveProject(project, projectDirectory);
-            BuildChapter(project, chapter, projectDirectory);
-            Audio.Play("event:/ui/main/button_select");
+            room.Normalize();
+
+            SaveProject(
+                project,
+                projectDirectory);
+
+            BuildChapter(
+                project,
+                chapter,
+                projectDirectory);
+
+            Audio.Play(
+                "event:/ui/main/button_select");
         }
 
         private void Back() {
-            SaveProject(project, projectDirectory);
+            SaveCurrentProjectOnly();
+
             RemoveSelf();
-            Engine.Scene.OnEndOfFrame += () => ShowChapter(owner, project, projectDirectory, chapter);
+
+            Scene scene =
+                Engine.Scene;
+
+            if (scene != null) {
+                scene.OnEndOfFrame += () =>
+                    ShowChapter(
+                        owner,
+                        project,
+                        projectDirectory,
+                        chapter);
+            }
         }
 
         private sealed class ToolbarButton {
@@ -817,22 +2356,94 @@ public sealed class BetterMapEditorModule : EverestModule {
             public readonly Rectangle Rect;
             public readonly Action Action;
 
-            public ToolbarButton(string label, int x, int y, int w, int h, Action action) {
+            public ToolbarButton(
+                string label,
+                int x,
+                int y,
+                int width,
+                int height,
+                Action action) {
+
                 Label = label;
-                Rect = new Rectangle(x, y, w, h);
+
+                Rect =
+                    new Rectangle(
+                        x,
+                        y,
+                        width,
+                        height);
+
                 Action = action;
             }
 
-            public bool Contains(Vector2 point) => Rect.Contains((int)point.X, (int)point.Y);
+            public bool Contains(
+                Vector2 point) {
 
-            public void Render(EditorTool currentTool) {
-                bool selected = (Label == "SOLID" && currentTool == EditorTool.Solid) ||
-                                (Label == "ERASE" && currentTool == EditorTool.Erase) ||
-                                (Label == "SPAWN" && currentTool == EditorTool.Spawn);
-                Color fill = selected ? Color.White * 0.28f : Color.White * 0.12f;
-                Draw.Rect(Rect.X, Rect.Y, Rect.Width, Rect.Height, fill);
-                Draw.HollowRect(Rect.X, Rect.Y, Rect.Width, Rect.Height, Color.White * 0.8f);
-                ActiveFont.DrawOutline(Label, new Vector2(Rect.Center.X, Rect.Center.Y), new Vector2(0.5f, 0.5f), Vector2.One * 0.45f, Color.White, 2f, Color.Black);
+                return Rect.Contains(
+                    (int)point.X,
+                    (int)point.Y);
+            }
+
+            public void Render(
+                EditorTool currentTool) {
+
+                bool selected =
+                    (Label == "SELECT" &&
+                     currentTool ==
+                        EditorTool.Select) ||
+                    (Label == "SOLID" &&
+                     currentTool ==
+                        EditorTool.Solid) ||
+                    (Label == "ERASE" &&
+                     currentTool ==
+                        EditorTool.Erase) ||
+                    (Label == "SPAWN" &&
+                     currentTool ==
+                        EditorTool.Spawn) ||
+                    (Label == "BERRY" &&
+                     currentTool ==
+                        EditorTool.Strawberry) ||
+                    (Label == "SPRING" &&
+                     currentTool ==
+                        EditorTool.Spring) ||
+                    (Label == "SPIKES" &&
+                     currentTool ==
+                        EditorTool.SpikesUp) ||
+                    (Label == "PAN" &&
+                     currentTool ==
+                        EditorTool.Pan);
+
+                Color fill =
+                    selected
+                        ? Color.White * 0.28f
+                        : Color.White * 0.12f;
+
+                Draw.Rect(
+                    Rect.X,
+                    Rect.Y,
+                    Rect.Width,
+                    Rect.Height,
+                    fill);
+
+                Draw.HollowRect(
+                    Rect.X,
+                    Rect.Y,
+                    Rect.Width,
+                    Rect.Height,
+                    Color.White * 0.8f);
+
+                ActiveFont.DrawOutline(
+                    Label,
+                    new Vector2(
+                        Rect.Center.X,
+                        Rect.Center.Y),
+                    new Vector2(
+                        0.5f,
+                        0.5f),
+                    Vector2.One * 0.38f,
+                    Color.White,
+                    2f,
+                    Color.Black);
             }
         }
     }
@@ -847,69 +2458,118 @@ public sealed class BetterMapEditorModule : EverestModule {
         }
 
         public override void Render() {
-            Draw.Rect(0, 0, 1920, 1080, Color.Black * 0.78f);
+            Draw.Rect(0f, 0f, 1920f, 1080f, Color.Black * 0.78f);
+
             if (menu?.Scene == null)
                 return;
+
             menu.RecalculateSize();
-            float w = Math.Min(1500f, menu.Width + 100f);
-            float h = Math.Min(980f, menu.Height + 80f);
-            Vector2 p = menu.Position;
-            Draw.Rect(p.X - w * 0.5f, p.Y - h * 0.5f, w, h, Color.Black * 0.94f);
-            Draw.HollowRect(p.X - w * 0.5f, p.Y - h * 0.5f, w, h, Color.White * 0.9f);
+
+            float width = Math.Min(1500f, menu.Width + 100f);
+            float height = Math.Min(980f, menu.Height + 80f);
+            Vector2 position = menu.Position;
+
+            Draw.Rect(
+                position.X - width * 0.5f,
+                position.Y - height * 0.5f,
+                width,
+                height,
+                Color.Black * 0.94f);
+
+            Draw.HollowRect(
+                position.X - width * 0.5f,
+                position.Y - height * 0.5f,
+                width,
+                height,
+                Color.White * 0.9f);
         }
     }
 
     private sealed class OptionalPointerController : Entity {
         private readonly TextMenu menu;
+        private Vector2 dragStart;
+        private bool potentialTap;
         private float scrollAccumulator;
 
         public OptionalPointerController(TextMenu menu) {
             this.menu = menu;
             Tag = Tags.HUD | Tags.PauseUpdate;
-            Depth = -2000001;
         }
 
         public override void Update() {
             base.Update();
-            if (menu == null || menu.Scene == null || !menu.Visible || !menu.Focused || menu.Items == null || menu.Items.Count == 0)
-                return;
 
-            if (!OptionalMobileBridge.TouchAvailable)
+            if (menu?.Scene == null || !menu.Focused || menu.Items == null || menu.Items.Count == 0)
                 return;
-
-            Vector2 pointer = OptionalMobileBridge.TouchPosition;
-            bool pressed = OptionalMobileBridge.ConsumeTouchTap();
-            float scroll = OptionalMobileBridge.ConsumeTouchScroll();
 
             menu.RecalculateSize();
+
+            Vector2 pointer = MInput.Mouse.Position;
             Vector2 origin = menu.Position - menu.Justify * new Vector2(menu.Width, menu.Height);
 
-            if (Math.Abs(scroll) > 34f)
-                menu.MoveSelection(scroll > 0 ? -1 : 1, true);
+            if (MInput.Mouse.PressedLeftButton) {
+                dragStart = pointer;
+                potentialTap = true;
+            }
+
+            if (MInput.Mouse.CheckLeftButton &&
+                potentialTap &&
+                Vector2.Distance(dragStart, pointer) > 20f) {
+
+                potentialTap = false;
+            }
+
+            float scroll = MInput.Mouse.WheelDelta;
+            scrollAccumulator += scroll;
+            if (Math.Abs(scrollAccumulator) >= 120f) {
+                menu.MoveSelection(scrollAccumulator > 0f ? -1 : 1, true);
+                scrollAccumulator = 0f;
+            }
+
+            if (!MInput.Mouse.ReleasedLeftButton || !potentialTap) {
+                if (MInput.Mouse.ReleasedLeftButton)
+                    potentialTap = false;
+                return;
+            }
+
+            potentialTap = false;
 
             float itemY = origin.Y;
             for (int i = 0; i < menu.Items.Count; i++) {
                 TextMenu.Item item = menu.Items[i];
                 if (item == null || !item.Visible)
                     continue;
-                float h = item.Height();
-                float centerY = itemY + h * 0.5f;
-                float hitH = Math.Max(h, 80f);
-                bool inside = item.Hoverable && pointer.X >= origin.X - 100f && pointer.X <= origin.X + menu.Width + 100f && pointer.Y >= centerY - hitH * 0.5f && pointer.Y <= centerY + hitH * 0.5f;
-                if (inside) {
-                    if (menu.Current != item) {
+
+                float height = item.Height();
+                float centerY = itemY + height * 0.5f;
+                float hitHeight = Math.Max(height, 80f);
+
+                if (item.Hoverable &&
+                    pointer.X >= origin.X - 100f &&
+                    pointer.X <= origin.X + menu.Width + 100f &&
+                    pointer.Y >= centerY - hitHeight * 0.5f &&
+                    pointer.Y <= centerY + hitHeight * 0.5f) {
+
+                    if (menu.Selection != i) {
                         menu.Current?.OnLeave?.Invoke();
                         menu.Selection = i;
                         item.OnEnter?.Invoke();
-                        item.SelectWiggler?.Start();
                     }
-                    if (pressed) {
-                        item.ConfirmPressed();
-                        item.OnPressed?.Invoke();
+
+                    item.ConfirmPressed();
+                    item.OnPressed?.Invoke();
+
+                    if (pointer.X > origin.X + menu.Width - 160f) {
+                        item.RightPressed();
+                    } else if (pointer.X > origin.X + menu.Width - 320f &&
+                               pointer.X < origin.X + menu.Width - 160f) {
+
+                        item.LeftPressed();
                     }
                     return;
                 }
-                itemY += h + menu.ItemSpacing;
+
+                itemY += height + menu.ItemSpacing;
             }
         }
     }
@@ -919,13 +2579,23 @@ public sealed class BetterMapEditorModule : EverestModule {
 
         public WrappedTextItem(string value, float width) {
             Selectable = false;
-            text = FancyText.Parse(value ?? string.Empty, (int)width, 100);
+            text = FancyText.Parse(value ?? "", (int)width, 100);
         }
 
-        public override float Height() => text.Lines * ActiveFont.LineHeight * 0.55f + 30f;
-        public override float LeftWidth() => 900f;
+        public override float Height() {
+            return text.Lines * ActiveFont.LineHeight * 0.55f + 30f;
+        }
+
+        public override float LeftWidth() {
+            return 920f;
+        }
+
         public override void Render(Vector2 position, bool highlighted) {
-            text.Draw(position + new Vector2(Container.Width * 0.5f, 0), new Vector2(0.5f, 0.5f), Vector2.One * 0.55f, Container.Alpha);
+            text.Draw(
+                position + new Vector2(Container.Width * 0.5f, 0f),
+                new Vector2(0.5f, 0.5f),
+                Vector2.One * 0.55f,
+                Container.Alpha);
         }
     }
 

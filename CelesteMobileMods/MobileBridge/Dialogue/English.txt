@@ -1,2 +1,4 @@
-MOBILEBRIDGE_MOD_BROWSER=MOD BROWSER
+MOBILEBRIDGE_MOD_BROWSER=MOD MANAGER
 MOBILEBRIDGE_ABOUT_PORT=ABOUT THE PORT
+MOBILEBRIDGE_ABOUT_BODY=Celeste Mobile Port by Unlim8ted Studios. Built around the Celeste WASM/Everest runtime with native mobile wrappers for controls, saves, haptics, and platform integration.
+MOBILEBRIDGE_VISIT=VISIT UNLIM8TED

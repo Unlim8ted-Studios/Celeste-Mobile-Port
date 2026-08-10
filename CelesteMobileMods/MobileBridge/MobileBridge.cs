@@ -1,10 +1,13 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 #if BROWSER
 using System.Runtime.InteropServices.JavaScript;
 #endif
 using Celeste;
 using Celeste.Mod;
+using FMOD.Studio;
 using Microsoft.Xna.Framework;
 using Monocle;
 
@@ -16,16 +19,13 @@ public sealed class MobileBridgeSettings : EverestModuleSettings {
     private bool joystickSnap8Way = true;
     private bool hapticFeedback = true;
 
-    /// <summary>
-    /// Controls the gameplay touch-control overlay in the wrapper. This is not
-    /// MouseUI's menu-touch enable switch; MouseUI detects touch capability
-    /// directly through MobileBridgeApi.
-    /// </summary>
     public bool TouchControls {
         get => touchControls;
         set {
             touchControls = value;
-            MobileBridgeApi.SetOption("touch_controls", value);
+            MobileBridgeApi.SetOption(
+                "touch_controls",
+                value);
         }
     }
 
@@ -33,7 +33,9 @@ public sealed class MobileBridgeSettings : EverestModuleSettings {
         get => joystickMode;
         set {
             joystickMode = value;
-            MobileBridgeApi.SetOption("joystick_mode", value);
+            MobileBridgeApi.SetOption(
+                "joystick_mode",
+                value);
         }
     }
 
@@ -41,7 +43,9 @@ public sealed class MobileBridgeSettings : EverestModuleSettings {
         get => joystickSnap8Way;
         set {
             joystickSnap8Way = value;
-            MobileBridgeApi.SetOption("joystick_snap_8way", value);
+            MobileBridgeApi.SetOption(
+                "joystick_snap_8way",
+                value);
         }
     }
 
@@ -49,7 +53,9 @@ public sealed class MobileBridgeSettings : EverestModuleSettings {
         get => hapticFeedback;
         set {
             hapticFeedback = value;
-            MobileBridgeApi.SetOption("haptic_feedback", value);
+            MobileBridgeApi.SetOption(
+                "haptic_feedback",
+                value);
         }
     }
 }
@@ -57,10 +63,11 @@ public sealed class MobileBridgeSettings : EverestModuleSettings {
 public sealed class MobileBridgeModule : EverestModule {
     public static MobileBridgeModule Instance { get; private set; }
 
-    public override Type SettingsType => typeof(MobileBridgeSettings);
-
     public static MobileBridgeSettings Settings =>
         (MobileBridgeSettings)Instance._Settings;
+
+    public override Type SettingsType =>
+        typeof(MobileBridgeSettings);
 
     public MobileBridgeModule() {
         Instance = this;
@@ -85,19 +92,159 @@ public sealed class MobileBridgeModule : EverestModule {
     public override void CreateModMenuSection(
         TextMenu menu,
         bool inGame,
-        FMOD.Studio.EventInstance snapshot) {
+        EventInstance snapshot) {
 
-        base.CreateModMenuSection(menu, inGame, snapshot);
+        // MobileTweaks moves this module's settings into normal Options.
+        // Without MobileTweaks, keep the ordinary Everest-generated settings
+        // so MobileBridge remains useful as a standalone mod.
+        if (IsMobileTweaksLoaded()) {
+            return;
+        }
 
-        // Wrapper actions are intentionally ordinary TextMenu buttons. They
-        // remain keyboard/controller accessible without MouseUI and become
-        // mouse/touch clickable automatically when MouseUI is installed.
-        menu.Add(new TextMenu.SubHeader("MOBILE TOOLS"));
-        menu.Add(new TextMenu.Button("MOD BROWSER").Pressed(MobileBridgeApi.OpenModBrowser));
-        menu.Add(new TextMenu.Button("SAVE DATA MANAGER").Pressed(MobileBridgeApi.OpenSaveData));
-        menu.Add(new TextMenu.Button("FILE MANAGER").Pressed(MobileBridgeApi.OpenFileManager));
-        menu.Add(new TextMenu.Button("CONTROL LAYOUT EDITOR").Pressed(MobileBridgeApi.OpenLayoutEditor));
-        menu.Add(new TextMenu.Button("RESTART MOBILE WRAPPER").Pressed(MobileBridgeApi.ResetGame));
+        base.CreateModMenuSection(
+            menu,
+            inGame,
+            snapshot);
+
+        menu.Add(
+            new TextMenu.SubHeader(
+                "MOBILE TOOLS"));
+
+        menu.Add(
+            new TextMenu.Button(
+                "SAVE DATA MANAGER")
+            .Pressed(
+                MobileBridgeApi.OpenSaveData));
+
+        menu.Add(
+            new TextMenu.Button(
+                "FILE MANAGER")
+            .Pressed(
+                MobileBridgeApi.OpenFileManager));
+
+        menu.Add(
+            new TextMenu.Button(
+                "RESIZE / MOVE CONTROLS")
+            .Pressed(
+                MobileBridgeApi.OpenLayoutEditor));
+    }
+
+    public static bool GetHapticFeedback() {
+        return Instance?._Settings is MobileBridgeSettings settings
+            ? settings.HapticFeedback
+            : true;
+    }
+
+    public static void SetHapticFeedback(
+        bool value) {
+
+        if (Instance?._Settings is MobileBridgeSettings settings) {
+            settings.HapticFeedback = value;
+        }
+    }
+
+    public static void ExportSave() {
+        MobileBridgeApi.ExportSave();
+    }
+
+    public static void LoadSave() {
+        MobileBridgeApi.LoadSave();
+    }
+
+    public static void OpenControlsMenu(
+        TextMenu parent) {
+
+        if (parent?.Scene == null) {
+            return;
+        }
+
+        parent.Focused = false;
+
+        TextMenu menu = new() {
+            Position =
+                new Vector2(
+                    Engine.Width,
+                    Engine.Height) / 2f,
+            Tag =
+                Tags.HUD |
+                Tags.PauseUpdate,
+            ItemSpacing = 12f
+        };
+
+        menu.Add(
+            new TextMenu.Header(
+                "MOBILE CONTROLS"));
+
+        TextMenu.OnOff snap = new(
+            "8-WAY SNAP",
+            Settings.JoystickSnap8Way);
+
+        TextMenu.Slider movement = new(
+            "MOVEMENT",
+            index =>
+                index == 0
+                    ? "JOYSTICK"
+                    : "ARROWS",
+            0,
+            1,
+            Settings.JoystickMode
+                ? 0
+                : 1);
+
+        movement.Change(index => {
+            Settings.JoystickMode =
+                index == 0;
+
+            snap.Disabled =
+                !Settings.JoystickMode;
+        });
+
+        menu.Add(movement);
+
+        snap.Disabled =
+            !Settings.JoystickMode;
+
+        snap.Change(value =>
+            Settings.JoystickSnap8Way =
+                value);
+
+        menu.Add(snap);
+
+        menu.Add(
+            new TextMenu.Button(
+                "RESIZE / MOVE CONTROLS")
+            .Pressed(
+                MobileBridgeApi.OpenLayoutEditor));
+
+        menu.Add(
+            new TextMenu.Button("BACK")
+            .Pressed(menu.Close));
+
+        menu.OnCancel =
+            menu.Close;
+
+        ModalBackdrop backdrop =
+            new(menu);
+
+        menu.OnClose += () => {
+            backdrop.RemoveSelf();
+
+            if (parent.Scene != null) {
+                parent.Focused = true;
+            }
+        };
+
+        Engine.Scene.Add(backdrop);
+        Engine.Scene.Add(menu);
+    }
+
+    private static bool IsMobileTweaksLoaded() {
+        return AppDomain.CurrentDomain
+            .GetAssemblies()
+            .Any(assembly =>
+                assembly.GetType(
+                    "Celeste.Mod.MobileTweaks.MobileTweaksModule",
+                    throwOnError: false) != null);
     }
 
     private static void OnRumble(
@@ -108,7 +255,9 @@ public sealed class MobileBridgeModule : EverestModule {
         orig(strength, length);
 
         if (Settings.HapticFeedback) {
-            MobileBridgeApi.Haptic(strength.ToString(), length.ToString());
+            MobileBridgeApi.Haptic(
+                strength.ToString(),
+                length.ToString());
         }
     }
 
@@ -126,114 +275,263 @@ public sealed class MobileBridgeModule : EverestModule {
             return;
         }
 
-        MobileBridgeApi.SetOption("touch_controls", settings.TouchControls);
-        MobileBridgeApi.SetOption("joystick_mode", settings.JoystickMode);
-        MobileBridgeApi.SetOption("joystick_snap_8way", settings.JoystickSnap8Way);
-        MobileBridgeApi.SetOption("haptic_feedback", settings.HapticFeedback);
+        MobileBridgeApi.SetOption(
+            "touch_controls",
+            settings.TouchControls);
+
+        MobileBridgeApi.SetOption(
+            "joystick_mode",
+            settings.JoystickMode);
+
+        MobileBridgeApi.SetOption(
+            "joystick_snap_8way",
+            settings.JoystickSnap8Way);
+
+        MobileBridgeApi.SetOption(
+            "haptic_feedback",
+            settings.HapticFeedback);
     }
 
     private static void OnCreateMainMenuButtons(
         OuiMainMenu menu,
-        System.Collections.Generic.List<MenuButton> buttons) {
+        List<MenuButton> buttons) {
 
-        Vector2 position = Vector2.Zero;
+        Vector2 position =
+            Vector2.Zero;
+
+        int optionsIndex =
+            FindButtonIndex(
+                buttons,
+                "menu_options");
+
+        int modManagerIndex =
+            optionsIndex >= 0
+                ? optionsIndex
+                : buttons.Count;
+
         buttons.Insert(
-            Math.Max(0, buttons.Count - 1),
+            Math.Clamp(
+                modManagerIndex,
+                0,
+                buttons.Count),
             new MainMenuSmallButton(
-                "ANDROID_PORT_ABOUT",
+                "MOBILEBRIDGE_MOD_BROWSER",
                 "menu/options",
                 menu,
                 position,
                 position,
-                ShowAboutDialog));
+                MobileBridgeApi.OpenModBrowser));
+
+        optionsIndex =
+            FindButtonIndex(
+                buttons,
+                "menu_options");
+
+        int aboutIndex =
+            optionsIndex >= 0
+                ? optionsIndex + 1
+                : buttons.Count;
+
+        buttons.Insert(
+            Math.Clamp(
+                aboutIndex,
+                0,
+                buttons.Count),
+            new MainMenuSmallButton(
+                "MOBILEBRIDGE_ABOUT_PORT",
+                "menu/options",
+                menu,
+                position,
+                position,
+                () =>
+                    ShowAboutDialog(menu)));
     }
 
-    private static void ShowAboutDialog() {
-        TextMenu popup = new TextMenu {
-            Position = new Vector2(Engine.Width, Engine.Height) / 2f,
-            Tag = Tags.HUD
+    private static int FindButtonIndex(
+        List<MenuButton> buttons,
+        string labelName) {
+
+        return buttons.FindIndex(button =>
+            button is MainMenuSmallButton small &&
+            string.Equals(
+                small.LabelName,
+                labelName,
+                StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void ShowAboutDialog(
+        OuiMainMenu owner) {
+
+        if (owner?.Scene == null) {
+            return;
+        }
+
+        owner.Focused = false;
+
+        TextMenu popup = new() {
+            Position =
+                new Vector2(
+                    Engine.Width,
+                    Engine.Height) / 2f,
+            Tag =
+                Tags.HUD |
+                Tags.PauseUpdate,
+            ItemSpacing = 12f
         };
 
-        popup.Add(new TextMenu.Header(Dialog.Clean("ANDROID_PORT_ABOUT")));
-        popup.Add(new MultilineText(Dialog.Clean("ANDROID_PORT_ABOUT_BODY"), 700f));
-        popup.Add(new TextMenu.Button(Dialog.Clean("ANDROID_PORT_VISIT"))
-            .Pressed(() => MobileBridgeApi.OpenUrlPrompt("https://unlim8ted.com")));
-        popup.Add(new TextMenu.Button("CLOSE").Pressed(popup.Close));
+        popup.Add(
+            new TextMenu.Header(
+                Dialog.Clean(
+                    "MOBILEBRIDGE_ABOUT_PORT")));
 
-        Entity background = new Entity {
-            Depth = popup.Depth + 1,
-            Tag = Tags.HUD
+        popup.Add(
+            new MultilineText(
+                Dialog.Clean(
+                    "MOBILEBRIDGE_ABOUT_BODY"),
+                900f));
+
+        popup.Add(
+            new TextMenu.Button(
+                Dialog.Clean(
+                    "MOBILEBRIDGE_VISIT"))
+            .Pressed(() =>
+                MobileBridgeApi.OpenUrlPrompt(
+                    "https://unlim8ted.com")));
+
+        popup.Add(
+            new TextMenu.Button("CLOSE")
+            .Pressed(popup.Close));
+
+        popup.OnCancel =
+            popup.Close;
+
+        ModalBackdrop backdrop =
+            new(popup);
+
+        popup.OnClose += () => {
+            backdrop.RemoveSelf();
+
+            if (owner.Scene != null) {
+                owner.Focused = true;
+            }
         };
 
-        background.Add(new RenderComponent(() => {
-            popup.RecalculateSize();
-            float width = popup.Width + 60f;
-            float height = popup.Height + 40f;
-            float left = popup.Position.X - width * 0.5f;
-            float top = popup.Position.Y - height * 0.5f;
-
-            Draw.Rect(left, top, width, height, Color.Black * 0.95f);
-            Draw.Rect(left, top, width, 4f, Color.White);
-            Draw.Rect(left, top + height - 4f, width, 4f, Color.White);
-            Draw.Rect(left, top, 4f, height, Color.White);
-            Draw.Rect(left + width - 4f, top, 4f, height, Color.White);
-        }));
-
+        Engine.Scene.Add(backdrop);
         Engine.Scene.Add(popup);
-        Engine.Scene.Add(background);
-        popup.OnClose += background.RemoveSelf;
     }
 
-    private sealed class RenderComponent : Component {
-        private readonly Action onRender;
+    private sealed class ModalBackdrop : Entity {
+        private readonly TextMenu menu;
 
-        public RenderComponent(Action onRender) : base(true, true) {
-            this.onRender = onRender;
+        public ModalBackdrop(
+            TextMenu menu) {
+
+            this.menu = menu;
+            Tag =
+                Tags.HUD |
+                Tags.PauseUpdate;
+            Depth =
+                menu.Depth + 1;
         }
 
         public override void Render() {
-            onRender?.Invoke();
+            Draw.Rect(
+                0f,
+                0f,
+                1920f,
+                1080f,
+                Color.Black * 0.78f);
+
+            if (menu?.Scene == null) {
+                return;
+            }
+
+            menu.RecalculateSize();
+
+            float width =
+                Math.Min(
+                    1500f,
+                    menu.Width + 100f);
+
+            float height =
+                Math.Min(
+                    980f,
+                    menu.Height + 80f);
+
+            Vector2 position =
+                menu.Position;
+
+            Draw.Rect(
+                position.X - width * 0.5f,
+                position.Y - height * 0.5f,
+                width,
+                height,
+                Color.Black * 0.94f);
+
+            Draw.HollowRect(
+                position.X - width * 0.5f,
+                position.Y - height * 0.5f,
+                width,
+                height,
+                Color.White * 0.9f);
         }
     }
 
     private sealed class MultilineText : TextMenu.Item {
-        private readonly FancyText.Text group;
+        private readonly FancyText.Text text;
 
-        public MultilineText(string text, float width) {
+        public MultilineText(
+            string value,
+            float width) {
+
             Selectable = false;
-            group = FancyText.Parse(text, (int)width, 100);
+
+            text =
+                FancyText.Parse(
+                    value ?? "",
+                    (int)width,
+                    100);
         }
 
         public override float Height() {
-            return group.Lines * ActiveFont.LineHeight * 0.6f + 20f;
+            return text.Lines *
+                ActiveFont.LineHeight *
+                0.6f +
+                20f;
         }
 
         public override float LeftWidth() {
-            return 600f;
+            return 800f;
         }
 
-        public override void Render(Vector2 position, bool highlighted) {
-            group.Draw(
-                position + new Vector2(Container.Width * 0.5f, 0f),
-                new Vector2(0.5f, 0.5f),
+        public override void Render(
+            Vector2 position,
+            bool highlighted) {
+
+            text.Draw(
+                position +
+                new Vector2(
+                    Container.Width * 0.5f,
+                    0f),
+                new Vector2(
+                    0.5f,
+                    0.5f),
                 Vector2.One * 0.6f,
                 Container.Alpha);
         }
     }
 }
 
-/// <summary>
-/// Public wrapper API. MouseUI binds to the touch subset of this class at
-/// runtime through reflection, so MouseUI does not need a MobileBridge DLL
-/// reference and still runs independently when this mod is absent.
-/// </summary>
 public static partial class MobileBridgeApi {
 #if BROWSER
     [JSImport("celesteAndroidHaptic", "android-port.js")]
-    private static partial void JsHaptic(string strength, string length);
+    private static partial void JsHaptic(
+        string strength,
+        string length);
 
     [JSImport("celesteAndroidOpenUrl", "android-port.js")]
-    private static partial void JsOpenUrl(string url);
+    private static partial void JsOpenUrl(
+        string url);
 
     [JSImport("celesteAndroidOpenModBrowser", "android-port.js")]
     private static partial void JsOpenModBrowser();
@@ -241,17 +539,22 @@ public static partial class MobileBridgeApi {
     [JSImport("celesteAndroidOpenSaveData", "android-port.js")]
     private static partial void JsOpenSaveData();
 
+    [JSImport("celesteAndroidExportSave", "android-port.js")]
+    private static partial void JsExportSave();
+
+    [JSImport("celesteAndroidLoadSave", "android-port.js")]
+    private static partial void JsLoadSave();
+
     [JSImport("celesteAndroidOpenFileManager", "android-port.js")]
     private static partial void JsOpenFileManager();
 
     [JSImport("celesteAndroidOpenLayoutEditor", "android-port.js")]
     private static partial void JsOpenLayoutEditor();
 
-    [JSImport("celesteAndroidResetGame", "android-port.js")]
-    private static partial void JsResetGame();
-
     [JSImport("celesteAndroidSetOption", "android-port.js")]
-    private static partial void JsSetOption(string key, string value);
+    private static partial void JsSetOption(
+        string key,
+        string value);
 
     [JSImport("celesteAndroidConsumeTouchTap", "android-port.js")]
     private static partial bool JsConsumeTouchTap();
@@ -264,19 +567,76 @@ public static partial class MobileBridgeApi {
 
     [JSImport("celesteAndroidConsumeTouchScroll", "android-port.js")]
     private static partial double JsConsumeTouchScroll();
+
+    [JSImport("celesteAndroidStartCelesteNetHost", "android-port.js")]
+    private static partial bool JsStartCelesteNetHost(
+        int port);
+
+    [JSImport("celesteAndroidStopCelesteNetHost", "android-port.js")]
+    private static partial void JsStopCelesteNetHost();
+
+    [JSImport("celesteAndroidIsCelesteNetHostRunning", "android-port.js")]
+    private static partial bool JsIsCelesteNetHostRunning();
+
+    [JSImport("celesteAndroidGetCelesteNetServers", "android-port.js")]
+    private static partial string JsGetCelesteNetServers();
 #else
-    private static void JsHaptic(string strength, string length) { }
-    private static void JsOpenUrl(string url) { }
-    private static void JsOpenModBrowser() { }
-    private static void JsOpenSaveData() { }
-    private static void JsOpenFileManager() { }
-    private static void JsOpenLayoutEditor() { }
-    private static void JsResetGame() { }
-    private static void JsSetOption(string key, string value) { }
-    private static bool JsConsumeTouchTap() => false;
-    private static double JsTouchX() => -1d;
-    private static double JsTouchY() => -1d;
-    private static double JsConsumeTouchScroll() => 0d;
+    private static void JsHaptic(
+        string strength,
+        string length) {
+    }
+
+    private static void JsOpenUrl(
+        string url) {
+    }
+
+    private static void JsOpenModBrowser() {
+    }
+
+    private static void JsOpenSaveData() {
+    }
+
+    private static void JsExportSave() {
+    }
+
+    private static void JsLoadSave() {
+    }
+
+    private static void JsOpenFileManager() {
+    }
+
+    private static void JsOpenLayoutEditor() {
+    }
+
+    private static void JsSetOption(
+        string key,
+        string value) {
+    }
+
+    private static bool JsConsumeTouchTap() =>
+        false;
+
+    private static double JsTouchX() =>
+        -1d;
+
+    private static double JsTouchY() =>
+        -1d;
+
+    private static double JsConsumeTouchScroll() =>
+        0d;
+
+    private static bool JsStartCelesteNetHost(
+        int port) =>
+        false;
+
+    private static void JsStopCelesteNetHost() {
+    }
+
+    private static bool JsIsCelesteNetHostRunning() =>
+        false;
+
+    private static string JsGetCelesteNetServers() =>
+        "";
 #endif
 
     public static bool IsBrowser {
@@ -289,42 +649,82 @@ public static partial class MobileBridgeApi {
         }
     }
 
-    /// <summary>
-    /// True only when MobileBridge is running in the browser/WASM runtime that
-    /// can supply touch events to MouseUI.
-    /// </summary>
-    public static bool TouchAvailable => IsBrowser;
+    public static bool TouchAvailable =>
+        IsBrowser;
 
-    public static void Haptic(string strength, string length) {
-        Invoke(() => JsHaptic(strength, length));
+    public static void Haptic(
+        string strength,
+        string length) {
+
+        Invoke(() =>
+            JsHaptic(
+                strength,
+                length));
     }
 
-    public static void OpenUrlPrompt(string url) {
-        Invoke(() => JsOpenUrl(url));
+    public static void OpenUrlPrompt(
+        string url) {
+
+        Invoke(() =>
+            JsOpenUrl(url));
     }
 
     public static void OpenModBrowser() {
-        Invoke(JsOpenModBrowser);
+        Invoke(
+            JsOpenModBrowser);
     }
 
     public static void OpenSaveData() {
-        Invoke(JsOpenSaveData);
+        Invoke(
+            JsOpenSaveData);
+    }
+
+    public static void ExportSave() {
+        if (!IsBrowser) {
+            return;
+        }
+
+        try {
+            JsExportSave();
+        } catch {
+            Invoke(
+                JsOpenSaveData);
+        }
+    }
+
+    public static void LoadSave() {
+        if (!IsBrowser) {
+            return;
+        }
+
+        try {
+            JsLoadSave();
+        } catch {
+            Invoke(
+                JsOpenSaveData);
+        }
     }
 
     public static void OpenFileManager() {
-        Invoke(JsOpenFileManager);
+        Invoke(
+            JsOpenFileManager);
     }
 
     public static void OpenLayoutEditor() {
-        Invoke(JsOpenLayoutEditor);
+        Invoke(
+            JsOpenLayoutEditor);
     }
 
-    public static void ResetGame() {
-        Invoke(JsResetGame);
-    }
+    public static void SetOption(
+        string key,
+        bool enabled) {
 
-    public static void SetOption(string key, bool enabled) {
-        Invoke(() => JsSetOption(key, enabled ? "true" : "false"));
+        Invoke(() =>
+            JsSetOption(
+                key,
+                enabled
+                    ? "true"
+                    : "false"));
     }
 
     public static bool ConsumeTouchTap() {
@@ -375,7 +775,79 @@ public static partial class MobileBridgeApi {
         }
     }
 
-    private static void Invoke(Action action) {
+    public static bool StartCelesteNetHost(
+        int port) {
+
+        if (!IsBrowser) {
+            return false;
+        }
+
+        try {
+            return JsStartCelesteNetHost(port);
+        } catch {
+            return false;
+        }
+    }
+
+    public static void StopCelesteNetHost() {
+        if (!IsBrowser) {
+            return;
+        }
+
+        try {
+            JsStopCelesteNetHost();
+        } catch {
+        }
+    }
+
+    public static bool IsCelesteNetHostRunning {
+        get {
+            if (!IsBrowser) {
+                return false;
+            }
+
+            try {
+                return JsIsCelesteNetHostRunning();
+            } catch {
+                return false;
+            }
+        }
+    }
+
+    public static string[] GetCelesteNetServers() {
+        if (!IsBrowser) {
+            return Array.Empty<string>();
+        }
+
+        try {
+            string raw =
+                JsGetCelesteNetServers() ??
+                "";
+
+            return raw
+                .Split(
+                    new[] {
+                        '\n',
+                        '\r',
+                        ',',
+                        ';'
+                    },
+                    StringSplitOptions.RemoveEmptyEntries)
+                .Select(value =>
+                    value.Trim())
+                .Where(value =>
+                    value.Length > 0)
+                .Distinct(
+                    StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        } catch {
+            return Array.Empty<string>();
+        }
+    }
+
+    private static void Invoke(
+        Action action) {
+
         if (!IsBrowser) {
             return;
         }
@@ -383,8 +855,6 @@ public static partial class MobileBridgeApi {
         try {
             action();
         } catch {
-            // The bridge must never take the game down if the host wrapper is
-            // missing an optional function or is still initializing.
         }
     }
 }

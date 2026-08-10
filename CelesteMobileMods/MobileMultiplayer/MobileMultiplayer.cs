@@ -1,7 +1,5 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -10,515 +8,1216 @@ using System.Threading;
 using System.Threading.Tasks;
 using Celeste;
 using Celeste.Mod;
-using Celeste.Mod.CelesteNet.Client;
 using Celeste.Mod.UI;
+using FMOD.Studio;
 using Microsoft.Xna.Framework;
 using Monocle;
+using MonoMod.RuntimeDetour;
 
 namespace Celeste.Mod.MobileMultiplayer;
 
 public sealed class MobileMultiplayerSettings : EverestModuleSettings {
     [SettingIgnore]
-    public string Username { get; set; } = "Guest";
+    public string[] CustomServers { get; set; } =
+        Array.Empty<string>();
 
     [SettingIgnore]
-    public string[] CustomServers { get; set; } = Array.Empty<string>();
-
-    [SettingIgnore]
-    public int HostPort { get; set; } = 17230;
+    public int HostPort { get; set; } =
+        17230;
 }
 
 public sealed class MobileMultiplayerModule : EverestModule {
     public static MobileMultiplayerModule Instance { get; private set; }
-    public static MobileMultiplayerSettings Settings => (MobileMultiplayerSettings)Instance._Settings;
-    public override Type SettingsType => typeof(MobileMultiplayerSettings);
 
-    private static Action<OuiMainMenu> pendingMainMenuAction;
+    public static MobileMultiplayerSettings Settings =>
+        (MobileMultiplayerSettings)Instance._Settings;
+
+    public override Type SettingsType =>
+        typeof(MobileMultiplayerSettings);
+
+    private delegate void CreateModMenuSectionDelegate(
+        EverestModule self,
+        TextMenu menu,
+        bool inGame,
+        EventInstance snapshot);
+
+    private delegate void CreateModMenuSectionHookDelegate(
+        CreateModMenuSectionDelegate orig,
+        EverestModule self,
+        TextMenu menu,
+        bool inGame,
+        EventInstance snapshot);
+
+    private static Hook celesteNetSettingsHook;
+
     private static TextMenu currentMenu;
-    private static OuiMainMenu currentOwner;
-    private static MenuKind currentMenuKind;
-
-    private static readonly object HostLock = new();
-    private static object hostedServer;
-    private static Thread hostedServerThread;
-    private static volatile bool hostRunning;
-    private static volatile bool hostStarting;
-    private static volatile bool hostJoinRequested;
-    private static string hostStatus = "NOT HOSTING";
+    private static TextMenu optionsParent;
+    private static OuiMainMenu mainMenuParent;
+    private static bool rootInGame;
+    private static EventInstance rootSnapshot;
 
     private static readonly object DiscoveryLock = new();
     private static List<string> discoveredLanServers = new();
-    private static volatile bool discoveryRunning;
-    private static volatile bool discoveryRefreshPending;
+    private static bool discoveryRunning;
+    private static bool discoveryRefreshPending;
 
-    private enum MenuKind {
+    private static bool joinWhenHostReady;
+
+    private enum ScreenKind {
         None,
-        Main,
+        Root,
         Host,
         Join,
         CustomServers
     }
+
+    private enum ServerSource {
+        Official,
+        CelesteNet,
+        Custom,
+        Lan,
+        Wrapper
+    }
+
+    private sealed record ServerEntry(
+        string Address,
+        ServerSource Source);
+
+    private static ScreenKind currentScreen =
+        ScreenKind.None;
 
     public MobileMultiplayerModule() {
         Instance = this;
     }
 
     public override void Load() {
-        Everest.Events.MainMenu.OnCreateButtons += OnCreateMainMenuButtons;
-        On.Celeste.OuiMainMenu.Update += OnMainMenuUpdate;
-        On.Monocle.Engine.Update += OnEngineUpdate;
-    }
-
-    public override void Initialize() {
-        base.Initialize();
         NormalizeSettings();
-        if (string.IsNullOrWhiteSpace(Settings.Username) || Settings.Username == "Guest") {
-            try {
-                if (!string.IsNullOrWhiteSpace(CelesteNetClientModule.Settings?.Name))
-                    Settings.Username = CelesteNetClientModule.Settings.Name;
-            } catch {
-            }
-        }
+        InstallCelesteNetSettingsHook();
+
+        Everest.Events.MainMenu.OnCreateButtons +=
+            OnCreateMainMenuButtons;
+
+        On.Monocle.Engine.Update +=
+            OnEngineUpdate;
     }
 
     public override void Unload() {
-        Everest.Events.MainMenu.OnCreateButtons -= OnCreateMainMenuButtons;
-        On.Celeste.OuiMainMenu.Update -= OnMainMenuUpdate;
-        On.Monocle.Engine.Update -= OnEngineUpdate;
-        StopHost();
-        pendingMainMenuAction = null;
-        currentMenu = null;
-        currentOwner = null;
-        currentMenuKind = MenuKind.None;
+        Everest.Events.MainMenu.OnCreateButtons -=
+            OnCreateMainMenuButtons;
+
+        On.Monocle.Engine.Update -=
+            OnEngineUpdate;
+
+        CloseCurrentMenu(
+            restoreParent: false);
+
+        celesteNetSettingsHook?.Dispose();
+        celesteNetSettingsHook = null;
     }
 
-    private static void NormalizeSettings() {
-        Settings.Username = NormalizeUsername(Settings.Username);
-        Settings.CustomServers ??= Array.Empty<string>();
-        Settings.CustomServers = Settings.CustomServers
-            .Select(NormalizeServer)
-            .Where(s => !string.IsNullOrWhiteSpace(s))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        Settings.HostPort = Math.Clamp(Settings.HostPort, 1024, 65535);
-    }
+    /// <summary>
+    /// When MobileTweaks exists, MobileMultiplayer is represented in normal
+    /// Options -> Multiplayer. Without MobileTweaks, preserve a standalone
+    /// entry in Mod Options.
+    /// </summary>
+    public override void CreateModMenuSection(
+        TextMenu menu,
+        bool inGame,
+        EventInstance snapshot) {
 
-    private static void SaveOurSettings() {
-        NormalizeSettings();
-        try { Instance.SaveSettings(); } catch { }
-    }
-
-    private static void OnCreateMainMenuButtons(OuiMainMenu menu, List<MenuButton> buttons) {
-        Vector2 pos = Vector2.Zero;
-        int index = Math.Max(0, buttons.Count - 1);
-        buttons.Insert(index, new MainMenuSmallButton("MULTIPLAYER", "menu/options", menu, pos, pos, () => ShowMultiplayerMenu(menu)));
-    }
-
-    private static void OnMainMenuUpdate(On.Celeste.OuiMainMenu.orig_Update orig, OuiMainMenu menu) {
-        orig(menu);
-        if (pendingMainMenuAction == null || menu == null || !menu.Visible || !menu.Focused)
+        if (IsMobileTweaksLoaded()) {
             return;
-
-        Action<OuiMainMenu> action = pendingMainMenuAction;
-        pendingMainMenuAction = null;
-        Engine.Scene.OnEndOfFrame += () => action(menu);
-    }
-
-    private static void OnEngineUpdate(On.Monocle.Engine.orig_Update orig, Engine engine, GameTime gameTime) {
-        orig(engine, gameTime);
-
-        if (hostJoinRequested && hostRunning) {
-            hostJoinRequested = false;
-            Engine.Scene?.OnEndOfFrame += () => ConnectToServer($"127.0.0.1:{Settings.HostPort}");
         }
 
-        if (discoveryRefreshPending) {
-            discoveryRefreshPending = false;
-            if (currentMenuKind == MenuKind.Join && currentOwner != null && currentMenu != null && currentMenu.Scene != null) {
-                OuiMainMenu owner = currentOwner;
-                Engine.Scene.OnEndOfFrame += () => ShowJoinMenu(owner, startDiscovery: false);
+        base.CreateModMenuSection(
+            menu,
+            inGame,
+            snapshot);
+
+        menu.Add(
+            new TextMenu.Button(
+                "OPEN MULTIPLAYER")
+            .Pressed(() =>
+                OpenOptionsMenu(
+                    menu,
+                    inGame,
+                    snapshot)));
+    }
+
+    /// <summary>
+    /// Entry point used by MobileTweaks' normal Options menu.
+    /// </summary>
+    public static void OpenOptionsMenu(
+        TextMenu parent,
+        bool inGame,
+        EventInstance snapshot) {
+
+        optionsParent = parent;
+        mainMenuParent = null;
+        rootInGame = inGame;
+        rootSnapshot = snapshot;
+
+        if (parent != null) {
+            parent.Focused = false;
+        }
+
+        ShowRoot();
+    }
+
+    private static void OpenFromMainMenu(
+        OuiMainMenu parent) {
+
+        optionsParent = null;
+        mainMenuParent = parent;
+        rootInGame = false;
+        rootSnapshot = default;
+
+        if (parent != null) {
+            parent.Focused = false;
+        }
+
+        ShowRoot();
+    }
+
+    private static void OnCreateMainMenuButtons(
+        OuiMainMenu menu,
+        List<MenuButton> buttons) {
+
+        Vector2 position =
+            Vector2.Zero;
+
+        int climbIndex =
+            buttons.FindIndex(button =>
+                button is MainMenuClimb);
+
+        int insertIndex =
+            climbIndex >= 0
+                ? climbIndex + 1
+                : 0;
+
+        buttons.Insert(
+            Math.Clamp(
+                insertIndex,
+                0,
+                buttons.Count),
+            new MainMenuSmallButton(
+                "MOBILEMULTIPLAYER_MAINMENU",
+                "menu/options",
+                menu,
+                position,
+                position,
+                () =>
+                    OpenFromMainMenu(menu)));
+    }
+
+    /// <summary>
+    /// Everest builds Mod Options by asking each loaded EverestModule to add
+    /// its own section. Detour that single common method and suppress only the
+    /// CelesteNet.Client section. Other mods pass directly through.
+    /// </summary>
+    private static void InstallCelesteNetSettingsHook() {
+        try {
+            MethodInfo target =
+                typeof(EverestModule).GetMethod(
+                    "CreateModMenuSection",
+                    BindingFlags.Instance |
+                    BindingFlags.Public |
+                    BindingFlags.NonPublic,
+                    binder: null,
+                    types: new[] {
+                        typeof(TextMenu),
+                        typeof(bool),
+                        typeof(EventInstance)
+                    },
+                    modifiers: null);
+
+            if (target == null) {
+                Logger.Log(
+                    LogLevel.Warn,
+                    "MobileMultiplayer",
+                    "Could not locate EverestModule.CreateModMenuSection; CelesteNet settings cannot be relocated.");
+                return;
+            }
+
+            celesteNetSettingsHook =
+                new Hook(
+                    target,
+                    (CreateModMenuSectionHookDelegate)
+                        DetourCreateModMenuSection);
+        } catch (Exception e) {
+            Logger.Log(
+                LogLevel.Error,
+                "MobileMultiplayer",
+                $"Could not install CelesteNet settings relocation hook: {e}");
+        }
+    }
+
+    private static void DetourCreateModMenuSection(
+        CreateModMenuSectionDelegate orig,
+        EverestModule self,
+        TextMenu menu,
+        bool inGame,
+        EventInstance snapshot) {
+
+        if (string.Equals(
+            self?.Metadata?.Name,
+            "CelesteNet.Client",
+            StringComparison.OrdinalIgnoreCase)) {
+
+            // CelesteNet's section is recreated under Options -> Multiplayer.
+            return;
+        }
+
+        orig?.Invoke(
+            self,
+            menu,
+            inGame,
+            snapshot);
+    }
+
+    private static EverestModule GetCelesteNetModule() {
+        return Everest.Modules
+            .FirstOrDefault(module =>
+                string.Equals(
+                    module?.Metadata?.Name,
+                    "CelesteNet.Client",
+                    StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static object GetCelesteNetSettings() {
+        EverestModule module =
+            GetCelesteNetModule();
+
+        if (module == null) {
+            return null;
+        }
+
+        try {
+            PropertyInfo staticSettings =
+                module.GetType().GetProperty(
+                    "Settings",
+                    BindingFlags.Static |
+                    BindingFlags.Public |
+                    BindingFlags.NonPublic);
+
+            if (staticSettings != null) {
+                return staticSettings.GetValue(null);
+            }
+
+            FieldInfo field =
+                typeof(EverestModule).GetField(
+                    "_Settings",
+                    BindingFlags.Instance |
+                    BindingFlags.Public |
+                    BindingFlags.NonPublic);
+
+            return field?.GetValue(module);
+        } catch {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Use Everest's original generic settings generator on the actual loaded
+    /// CelesteNet module, so future CelesteNet settings continue to appear.
+    /// Then remove only its connection/server selector controls because Host
+    /// and Join replace that part of the interface.
+    /// </summary>
+    private static void AddCelesteNetSettings(
+        TextMenu menu,
+        bool inGame,
+        EventInstance snapshot) {
+
+        EverestModule module =
+            GetCelesteNetModule();
+
+        object settings =
+            GetCelesteNetSettings();
+
+        if (module == null ||
+            settings == null ||
+            celesteNetSettingsHook == null) {
+
+            menu.Add(
+                new TextMenu.SubHeader(
+                    "CELESTENET IS NOT LOADED",
+                    false));
+
+            return;
+        }
+
+        int firstGeneratedItem =
+            menu.Items.Count;
+
+        bool wasApplied =
+            celesteNetSettingsHook.IsApplied;
+
+        try {
+            if (wasApplied) {
+                celesteNetSettingsHook.Undo();
+            }
+
+            module.CreateModMenuSection(
+                menu,
+                inGame,
+                snapshot);
+        } finally {
+            if (wasApplied) {
+                celesteNetSettingsHook.Apply();
+            }
+        }
+
+        string[] generatedConnectionProperties = {
+            "EnabledEntry",
+            "ConnectDefaultButton",
+            "ConnectDefaultButtonHint",
+            "ServerEntry",
+            "ExtraServersEntry",
+            "ConnectLocallyButton",
+            "NameEntry"
+        };
+
+        foreach (string propertyName in
+            generatedConnectionProperties) {
+
+            RemoveReferencedMenuItem(
+                menu,
+                settings,
+                propertyName);
+        }
+
+        // CelesteNet's "reload extra servers" button is generated separately
+        // and is not exposed through a Settings property.
+        string reloadLabel =
+            Dialog.Clean(
+                "modoptions_celestenetclient_extraservers_reload");
+
+        foreach (TextMenu.Item item in
+            menu.Items
+                .Skip(firstGeneratedItem)
+                .ToArray()) {
+
+            if (item is TextMenu.Button button &&
+                string.Equals(
+                    button.Label,
+                    reloadLabel,
+                    StringComparison.OrdinalIgnoreCase)) {
+
+                menu.Remove(item);
             }
         }
     }
 
-    private static void ShowMultiplayerMenu(OuiMainMenu owner) {
-        TextMenu menu = CreateMenu("MULTIPLAYER", owner, MenuKind.Main);
-        CelesteNetClientSettings cn = CelesteNetClientModule.Settings;
-        string connection = cn.Connected ? $"CONNECTED: {cn.EffectiveServer}" : "OFFLINE";
-        menu.Add(new TextMenu.SubHeader(connection, false));
+    private static void RemoveReferencedMenuItem(
+        TextMenu menu,
+        object settings,
+        string propertyName) {
 
-        menu.Add(new TextMenu.Button($"USERNAME: {Settings.Username}").Pressed(() => {
-            CloseCurrentMenu();
-            PromptString(owner, Settings.Username, 20, value => {
-                Settings.Username = NormalizeUsername(value);
-                SaveOurSettings();
-                ApplyUsernameToCelesteNet();
-                pendingMainMenuAction = ShowMultiplayerMenu;
-            });
-        }));
+        try {
+            PropertyInfo property =
+                settings.GetType().GetProperty(
+                    propertyName,
+                    BindingFlags.Instance |
+                    BindingFlags.Public |
+                    BindingFlags.NonPublic);
 
-        menu.Add(new TextMenu.Button("HOST").Pressed(() => ShowHostMenu(owner)));
-        menu.Add(new TextMenu.Button("JOIN").Pressed(() => ShowJoinMenu(owner, startDiscovery: true)));
+            if (property?.GetValue(settings)
+                is TextMenu.Item item &&
+                menu.Items.Contains(item)) {
 
-        if (cn.Connected) {
-            menu.Add(new TextMenu.Button("DISCONNECT").Pressed(() => {
-                cn.Connected = false;
-                RefreshCurrent(MenuKind.Main);
-            }));
+                menu.Remove(item);
+            }
+        } catch {
         }
-
-        menu.Add(new TextMenu.Button("CELESTENET SETTINGS").Pressed(() => {
-            CloseCurrentMenu();
-            owner.Overworld.Goto<OuiModOptions>();
-        }));
-
-        menu.Add(new TextMenu.Button("CLOSE").Pressed(CloseCurrentMenu));
     }
 
-    private static void ShowHostMenu(OuiMainMenu owner) {
-        TextMenu menu = CreateMenu("HOST MULTIPLAYER", owner, MenuKind.Host);
-        string status;
-        lock (HostLock) status = hostStatus;
-        menu.Add(new TextMenu.SubHeader(status, false));
-        menu.Add(new TextMenu.SubHeader($"YOUR SERVER:  {GetBestLocalAddress()}:{Settings.HostPort}", false));
+    private static void ShowRoot() {
+        TextMenu menu =
+            CreateOverlay(
+                "MULTIPLAYER",
+                ScreenKind.Root);
 
-        menu.Add(new TextMenu.Button($"USERNAME: {Settings.Username}").Pressed(() => {
-            CloseCurrentMenu();
-            PromptString(owner, Settings.Username, 20, value => {
-                Settings.Username = NormalizeUsername(value);
-                SaveOurSettings();
-                ApplyUsernameToCelesteNet();
-                pendingMainMenuAction = ShowHostMenu;
-            });
-        }));
+        bool connected =
+            GetCelesteNetBool(
+                "Connected");
 
-        menu.Add(new TextMenu.Button($"PORT: {Settings.HostPort}").Pressed(() => {
-            if (hostRunning || hostStarting)
-                return;
-            CloseCurrentMenu();
-            PromptString(owner, Settings.HostPort.ToString(), 5, value => {
-                if (int.TryParse(value, out int port))
-                    Settings.HostPort = Math.Clamp(port, 1024, 65535);
-                SaveOurSettings();
-                pendingMainMenuAction = ShowHostMenu;
-            });
-        }));
+        string effectiveServer =
+            GetCelesteNetString(
+                "EffectiveServer",
+                "");
 
-        if (!hostRunning && !hostStarting) {
-            menu.Add(new TextMenu.Button("START HOST + JOIN").Pressed(() => {
-                if (OperatingSystem.IsBrowser()) {
-                    ShowInfo(owner,
-                        "HOSTING NEEDS WRAPPER SUPPORT",
-                        "CelesteNet.Server opens native TCP/UDP listening sockets. A browser/WASM build cannot provide that server socket directly. " +
-                        "Joining still uses CelesteNet.Client; hosting works in the native build. The Android wrapper can later expose a native host service through MobileBridge without changing this menu.",
-                        ShowHostMenu);
-                    return;
-                }
-                StartHost(joinAfterStart: true);
-                RefreshCurrent(MenuKind.Host);
-            }));
+        menu.Add(
+            new TextMenu.SubHeader(
+                connected
+                    ? $"CONNECTED: {effectiveServer}"
+                    : "OFFLINE",
+                false));
 
-            menu.Add(new TextMenu.Button("START HOST ONLY").Pressed(() => {
-                if (OperatingSystem.IsBrowser()) {
-                    ShowInfo(owner,
-                        "HOSTING NEEDS WRAPPER SUPPORT",
-                        "The browser/WASM runtime cannot listen as a CelesteNet TCP/UDP server. Use JOIN here, or expose native hosting through the Android wrapper.",
-                        ShowHostMenu);
-                    return;
-                }
-                StartHost(joinAfterStart: false);
-                RefreshCurrent(MenuKind.Host);
-            }));
+        menu.Add(
+            new TextMenu.Button("HOST")
+            .Pressed(ShowHost));
+
+        menu.Add(
+            new TextMenu.Button("JOIN")
+            .Pressed(() =>
+                ShowJoin(
+                    startDiscovery: true)));
+
+        if (connected) {
+            menu.Add(
+                new TextMenu.Button(
+                    "DISCONNECT")
+                .Pressed(() => {
+                    SetCelesteNetProperty(
+                        "Connected",
+                        false);
+
+                    ShowRoot();
+                }));
+        }
+
+        menu.Add(
+            new TextMenu.SubHeader(
+                "CELESTENET SETTINGS"));
+
+        string username =
+            GetCelesteNetString(
+                "Name",
+                "Guest");
+
+        menu.Add(
+            new TextMenu.Button(
+                $"USERNAME: {username}")
+            .Pressed(() =>
+                PromptString(
+                    username,
+                    20,
+                    value => {
+                        string cleaned =
+                            (value ?? "")
+                            .Trim();
+
+                        if (cleaned.Length == 0) {
+                            cleaned = "Guest";
+                        }
+
+                        if (cleaned.Length > 20) {
+                            cleaned =
+                                cleaned.Substring(
+                                    0,
+                                    20);
+                        }
+
+                        SetCelesteNetProperty(
+                            "Name",
+                            cleaned);
+
+                        SaveCelesteNetSettings();
+                    })));
+
+        AddCelesteNetSettings(
+            menu,
+            rootInGame,
+            rootSnapshot);
+
+        menu.Add(
+            new TextMenu.Button("BACK")
+            .Pressed(CloseRoot));
+    }
+
+    private static void ShowHost() {
+        TextMenu menu =
+            CreateOverlay(
+                "HOST",
+                ScreenKind.Host);
+
+        bool running =
+            MobileBridgeProxy.HostRunning;
+
+        menu.Add(
+            new TextMenu.SubHeader(
+                running
+                    ? $"HOSTING ON PORT {Settings.HostPort}"
+                    : "NOT HOSTING",
+                false));
+
+        menu.Add(
+            new TextMenu.Button(
+                $"PORT: {Settings.HostPort}")
+            .Pressed(() =>
+                PromptString(
+                    Settings.HostPort.ToString(),
+                    5,
+                    value => {
+                        if (int.TryParse(
+                            value,
+                            out int port)) {
+
+                            Settings.HostPort =
+                                Math.Clamp(
+                                    port,
+                                    1024,
+                                    65535);
+
+                            SaveOurSettings();
+                        }
+                    })));
+
+        if (!running) {
+            menu.Add(
+                new TextMenu.Button(
+                    "START HOST + JOIN")
+                .Pressed(() => {
+                    joinWhenHostReady = true;
+
+                    if (!MobileBridgeProxy.StartHost(
+                        Settings.HostPort)) {
+
+                        joinWhenHostReady = false;
+
+                        ShowInfo(
+                            "HOST UNAVAILABLE",
+                            "Hosting requires MobileBridge plus a native host implementation in AndroidWrapper or IOSWrapper.");
+
+                        return;
+                    }
+
+                    ShowHost();
+                }));
+
+            menu.Add(
+                new TextMenu.Button(
+                    "START HOST ONLY")
+                .Pressed(() => {
+                    joinWhenHostReady = false;
+
+                    if (!MobileBridgeProxy.StartHost(
+                        Settings.HostPort)) {
+
+                        ShowInfo(
+                            "HOST UNAVAILABLE",
+                            "Hosting requires MobileBridge plus a native host implementation in AndroidWrapper or IOSWrapper.");
+
+                        return;
+                    }
+
+                    ShowHost();
+                }));
         } else {
-            menu.Add(new TextMenu.Button("STOP HOST").Pressed(() => {
-                StopHost();
-                RefreshCurrent(MenuKind.Host);
-            }));
+            menu.Add(
+                new TextMenu.Button(
+                    "STOP HOST")
+                .Pressed(() => {
+                    joinWhenHostReady = false;
+                    MobileBridgeProxy.StopHost();
+                    ShowHost();
+                }));
         }
 
-        menu.Add(new TextMenu.Button("BACK").Pressed(() => ShowMultiplayerMenu(owner)));
+        menu.Add(
+            new TextMenu.Button("BACK")
+            .Pressed(ShowRoot));
     }
 
-    private static void ShowJoinMenu(OuiMainMenu owner, bool startDiscovery) {
-        TextMenu menu = CreateMenu("JOIN MULTIPLAYER", owner, MenuKind.Join);
-        CelesteNetClientSettings cn = CelesteNetClientModule.Settings;
-        menu.Add(new TextMenu.SubHeader(cn.Connected ? $"CONNECTED: {cn.EffectiveServer}" : "SELECT A SERVER", false));
+    private static void ShowJoin(
+        bool startDiscovery) {
 
-        List<ServerEntry> servers = BuildServerList();
-        foreach (ServerEntry server in servers) {
-            ServerEntry captured = server;
-            string prefix = captured.Source switch {
-                ServerSource.Lan => "LAN  ",
-                ServerSource.Custom => "CUSTOM  ",
-                ServerSource.CelesteNet => "SAVED  ",
-                _ => ""
-            };
-            menu.Add(new TextMenu.Button(prefix + captured.Address).Pressed(() => {
-                ConnectToServer(captured.Address);
-                RefreshCurrent(MenuKind.Join);
-            }));
+        TextMenu menu =
+            CreateOverlay(
+                "JOIN",
+                ScreenKind.Join);
+
+        bool connected =
+            GetCelesteNetBool(
+                "Connected");
+
+        string effectiveServer =
+            GetCelesteNetString(
+                "EffectiveServer",
+                "");
+
+        menu.Add(
+            new TextMenu.SubHeader(
+                connected
+                    ? $"CONNECTED: {effectiveServer}"
+                    : "ACTIVE / SAVED SERVERS",
+                false));
+
+        List<ServerEntry> servers =
+            BuildServerList();
+
+        foreach (ServerEntry server in
+            servers) {
+
+            ServerEntry captured =
+                server;
+
+            string prefix =
+                captured.Source switch {
+                    ServerSource.Official =>
+                        "OFFICIAL  ",
+                    ServerSource.Wrapper =>
+                        "LOCAL  ",
+                    ServerSource.Lan =>
+                        "LAN  ",
+                    ServerSource.Custom =>
+                        "CUSTOM  ",
+                    ServerSource.CelesteNet =>
+                        "SAVED  ",
+                    _ =>
+                        ""
+                };
+
+            menu.Add(
+                new TextMenu.Button(
+                    prefix +
+                    captured.Address)
+                .Pressed(() => {
+                    ConnectToServer(
+                        captured.Address);
+
+                    ShowJoin(
+                        startDiscovery: false);
+                }));
         }
 
-        if (servers.Count == 0)
-            menu.Add(new TextMenu.SubHeader("NO SERVERS FOUND", false));
+        if (servers.Count == 0) {
+            menu.Add(
+                new TextMenu.SubHeader(
+                    "NO SERVERS FOUND",
+                    false));
+        }
 
-        if (discoveryRunning)
-            menu.Add(new TextMenu.SubHeader("SCANNING LOCAL NETWORK...", false));
-        else
-            menu.Add(new TextMenu.Button("SCAN LOCAL NETWORK").Pressed(() => {
-                StartLanDiscovery();
-                RefreshCurrent(MenuKind.Join);
-            }));
+        if (discoveryRunning) {
+            menu.Add(
+                new TextMenu.SubHeader(
+                    "SCANNING LOCAL NETWORK...",
+                    false));
+        } else {
+            menu.Add(
+                new TextMenu.Button(
+                    "SCAN LOCAL NETWORK")
+                .Pressed(() => {
+                    StartLanDiscovery();
 
-        menu.Add(new TextMenu.Button("ADD CUSTOM SERVER").Pressed(() => {
-            CloseCurrentMenu();
-            PromptString(owner, "server.example.com:17230", 80, value => {
-                string server = NormalizeServer(value);
-                if (!string.IsNullOrWhiteSpace(server)) {
-                    Settings.CustomServers = Settings.CustomServers
-                        .Append(server)
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .ToArray();
-                    SaveOurSettings();
-                }
-                pendingMainMenuAction = main => ShowJoinMenu(main, startDiscovery: false);
-            });
-        }));
+                    ShowJoin(
+                        startDiscovery: false);
+                }));
+        }
 
-        menu.Add(new TextMenu.Button("MANAGE CUSTOM SERVERS").Pressed(() => ShowCustomServersMenu(owner)));
-        if (cn.Connected)
-            menu.Add(new TextMenu.Button("DISCONNECT").Pressed(() => {
-                cn.Connected = false;
-                RefreshCurrent(MenuKind.Join);
-            }));
-        menu.Add(new TextMenu.Button("BACK").Pressed(() => ShowMultiplayerMenu(owner)));
+        menu.Add(
+            new TextMenu.Button(
+                "ADD CUSTOM SERVER")
+            .Pressed(() =>
+                PromptString(
+                    "server.example.com:17230",
+                    80,
+                    AddCustomServer)));
 
-        if (startDiscovery && !OperatingSystem.IsBrowser())
+        menu.Add(
+            new TextMenu.Button(
+                "MANAGE CUSTOM SERVERS")
+            .Pressed(
+                ShowCustomServers));
+
+        if (connected) {
+            menu.Add(
+                new TextMenu.Button(
+                    "DISCONNECT")
+                .Pressed(() => {
+                    SetCelesteNetProperty(
+                        "Connected",
+                        false);
+
+                    ShowJoin(
+                        startDiscovery: false);
+                }));
+        }
+
+        menu.Add(
+            new TextMenu.Button("BACK")
+            .Pressed(ShowRoot));
+
+        if (startDiscovery) {
             StartLanDiscovery();
+        }
     }
 
-    private static void ShowCustomServersMenu(OuiMainMenu owner) {
-        TextMenu menu = CreateMenu("CUSTOM SERVERS", owner, MenuKind.CustomServers);
-        string[] servers = Settings.CustomServers ?? Array.Empty<string>();
+    private static void ShowCustomServers() {
+        TextMenu menu =
+            CreateOverlay(
+                "CUSTOM SERVERS",
+                ScreenKind.CustomServers);
 
-        if (servers.Length == 0)
-            menu.Add(new TextMenu.SubHeader("NO CUSTOM SERVERS", false));
+        string[] custom =
+            Settings.CustomServers ??
+            Array.Empty<string>();
 
-        foreach (string server in servers) {
-            string captured = server;
-            menu.Add(new TextMenu.Button("REMOVE  " + captured).Pressed(() => {
-                Settings.CustomServers = Settings.CustomServers
-                    .Where(s => !string.Equals(s, captured, StringComparison.OrdinalIgnoreCase))
-                    .ToArray();
-                SaveOurSettings();
-                ShowCustomServersMenu(owner);
-            }));
+        if (custom.Length == 0) {
+            menu.Add(
+                new TextMenu.SubHeader(
+                    "NO CUSTOM SERVERS",
+                    false));
         }
 
-        menu.Add(new TextMenu.Button("ADD SERVER").Pressed(() => {
-            CloseCurrentMenu();
-            PromptString(owner, "server.example.com:17230", 80, value => {
-                string server = NormalizeServer(value);
-                if (!string.IsNullOrWhiteSpace(server)) {
-                    Settings.CustomServers = Settings.CustomServers.Append(server).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        foreach (string server in
+            custom) {
+
+            string captured =
+                server;
+
+            menu.Add(
+                new TextMenu.Button(
+                    "REMOVE  " +
+                    captured)
+                .Pressed(() => {
+                    Settings.CustomServers =
+                        (Settings.CustomServers ??
+                         Array.Empty<string>())
+                        .Where(value =>
+                            !string.Equals(
+                                value,
+                                captured,
+                                StringComparison.OrdinalIgnoreCase))
+                        .ToArray();
+
                     SaveOurSettings();
-                }
-                pendingMainMenuAction = ShowCustomServersMenu;
-            });
-        }));
-        menu.Add(new TextMenu.Button("BACK").Pressed(() => ShowJoinMenu(owner, startDiscovery: false)));
+                    ShowCustomServers();
+                }));
+        }
+
+        menu.Add(
+            new TextMenu.Button(
+                "ADD SERVER")
+            .Pressed(() =>
+                PromptString(
+                    "server.example.com:17230",
+                    80,
+                    AddCustomServer)));
+
+        menu.Add(
+            new TextMenu.Button("BACK")
+            .Pressed(() =>
+                ShowJoin(
+                    startDiscovery: false)));
     }
 
-    private static void ShowInfo(OuiMainMenu owner, string title, string text, Action<OuiMainMenu> onClose) {
-        TextMenu menu = CreateMenu(title, owner, MenuKind.None);
-        menu.Add(new WrappedTextItem(text, 920f));
-        menu.Add(new TextMenu.Button("OK").Pressed(() => {
-            CloseCurrentMenu();
-            onClose?.Invoke(owner);
-        }));
+    private static void AddCustomServer(
+        string value) {
+
+        string normalized =
+            NormalizeServer(value);
+
+        if (normalized.Length == 0) {
+            return;
+        }
+
+        Settings.CustomServers =
+            (Settings.CustomServers ??
+             Array.Empty<string>())
+            .Append(normalized)
+            .Distinct(
+                StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        SaveOurSettings();
     }
 
-    private static TextMenu CreateMenu(string title, OuiMainMenu owner, MenuKind kind) {
-        CloseCurrentMenu();
+    private static TextMenu CreateOverlay(
+        string title,
+        ScreenKind screen) {
+
+        CloseCurrentMenu(
+            restoreParent: false);
+
+        currentScreen =
+            screen;
 
         TextMenu menu = new() {
-            Position = new Vector2(Engine.Width, Engine.Height) / 2f,
-            Tag = Tags.HUD,
+            Position =
+                new Vector2(
+                    Engine.Width,
+                    Engine.Height) / 2f,
+            Tag =
+                Tags.HUD |
+                Tags.PauseUpdate,
             ItemSpacing = 12f
         };
-        menu.Add(new TextMenu.Header(title));
-        menu.OnCancel = CloseCurrentMenu;
 
-        ModalBackdrop backdrop = new(menu);
-        OptionalPointerController pointer = new(menu);
-        menu.OnClose += () => {
-            backdrop.RemoveSelf();
-            pointer.RemoveSelf();
-            if (currentMenu == menu) {
-                currentMenu = null;
-                currentOwner = null;
-                currentMenuKind = MenuKind.None;
+        menu.Add(
+            new TextMenu.Header(title));
+
+        ModalBackdrop backdrop =
+            new(menu);
+
+        menu.OnCancel = () => {
+            if (screen == ScreenKind.Root) {
+                CloseRoot();
+            } else {
+                ShowRoot();
             }
         };
 
-        currentMenu = menu;
-        currentOwner = owner;
-        currentMenuKind = kind;
+        menu.OnClose += () => {
+            backdrop.RemoveSelf();
+
+            if (ReferenceEquals(
+                currentMenu,
+                menu)) {
+
+                currentMenu = null;
+            }
+        };
+
+        currentMenu =
+            menu;
+
         Engine.Scene.Add(backdrop);
         Engine.Scene.Add(menu);
-        Engine.Scene.Add(pointer);
+
         return menu;
     }
 
-    private static void CloseCurrentMenu() {
-        TextMenu menu = currentMenu;
+    private static void CloseCurrentMenu(
+        bool restoreParent) {
+
+        TextMenu menu =
+            currentMenu;
+
         currentMenu = null;
-        currentOwner = null;
-        currentMenuKind = MenuKind.None;
-        if (menu != null && menu.Scene != null)
+        currentScreen = ScreenKind.None;
+
+        if (menu?.Scene != null) {
             menu.Close();
-    }
+        }
 
-    private static void RefreshCurrent(MenuKind expectedKind) {
-        if (currentOwner == null)
-            return;
-        OuiMainMenu owner = currentOwner;
-        Engine.Scene.OnEndOfFrame += () => {
-            if (expectedKind == MenuKind.Main) ShowMultiplayerMenu(owner);
-            else if (expectedKind == MenuKind.Host) ShowHostMenu(owner);
-            else if (expectedKind == MenuKind.Join) ShowJoinMenu(owner, startDiscovery: false);
-            else if (expectedKind == MenuKind.CustomServers) ShowCustomServersMenu(owner);
-        };
-    }
-
-    private static void PromptString(OuiMainMenu owner, string initial, int maxLength, Action<string> accepted) {
-        if (owner?.Overworld == null)
-            return;
-        Audio.Play("event:/ui/main/savefile_rename_start");
-        owner.Overworld.Goto<OuiModOptionString>().Init<OuiMainMenu>(
-            initial ?? string.Empty,
-            value => accepted?.Invoke(value ?? string.Empty),
-            maxLength
-        );
-    }
-
-    private static void ApplyUsernameToCelesteNet() {
-        CelesteNetClientSettings cn = CelesteNetClientModule.Settings;
-        if (cn == null)
-            return;
-        cn.LoginMode = CelesteNetClientSettings.LoginModeType.Guest;
-        cn.Name = Settings.Username;
-        try { CelesteNetClientModule.Instance.SaveSettings(); } catch { }
-    }
-
-    private static void ConnectToServer(string address) {
-        address = NormalizeServer(address);
-        if (string.IsNullOrWhiteSpace(address))
-            return;
-
-        try {
-            CelesteNetClientSettings cn = CelesteNetClientModule.Settings;
-            if (cn.Connected)
-                cn.Connected = false;
-            cn.ServerOverride = string.Empty;
-            cn.Server = address;
-            cn.LoginMode = CelesteNetClientSettings.LoginModeType.Guest;
-            cn.Name = Settings.Username;
-            try { CelesteNetClientModule.Instance.SaveSettings(); } catch { }
-            cn.Connected = true;
-        } catch (Exception e) {
-            Logger.Log(LogLevel.Error, "MobileMultiplayer", $"Failed to connect to {address}: {e}");
+        if (restoreParent) {
+            RestoreParent();
         }
     }
 
-    private enum ServerSource {
-        Default,
-        CelesteNet,
-        Custom,
-        Lan
+    private static void CloseRoot() {
+        CloseCurrentMenu(
+            restoreParent: true);
     }
 
-    private sealed record ServerEntry(string Address, ServerSource Source);
+    private static void RestoreParent() {
+        if (optionsParent?.Scene != null) {
+            optionsParent.Focused = true;
+        }
+
+        if (mainMenuParent?.Scene != null) {
+            mainMenuParent.Focused = true;
+        }
+
+        optionsParent = null;
+        mainMenuParent = null;
+    }
+
+    private static void ShowInfo(
+        string title,
+        string message) {
+
+        TextMenu menu =
+            CreateOverlay(
+                title,
+                currentScreen);
+
+        menu.Add(
+            new WrappedTextItem(
+                message,
+                900f));
+
+        menu.Add(
+            new TextMenu.Button("OK")
+            .Pressed(ShowRoot));
+    }
+
+    private static void PromptString(
+        string initial,
+        int maxLength,
+        Action<string> accepted) {
+
+        if (Engine.Scene is not Overworld overworld) {
+            return;
+        }
+
+        bool returnToMainMenu =
+            mainMenuParent != null;
+
+        CloseCurrentMenu(
+            restoreParent: false);
+
+        Audio.Play(
+            "event:/ui/main/savefile_rename_start");
+
+        OuiModOptionString entry =
+            overworld.Goto<OuiModOptionString>();
+
+        entry.Init(
+            initial ?? "",
+            value =>
+                accepted?.Invoke(
+                    value ?? ""),
+            confirmed => {
+                if (returnToMainMenu) {
+                    overworld.Goto<OuiMainMenu>();
+                } else {
+                    overworld.Goto<OuiOptions>();
+                }
+            },
+            maxLength,
+            1);
+    }
+
+    private static void ConnectToServer(
+        string address) {
+
+        address =
+            NormalizeServer(address);
+
+        if (address.Length == 0) {
+            return;
+        }
+
+        try {
+            SetCelesteNetProperty(
+                "Connected",
+                false);
+
+            SetCelesteNetProperty(
+                "ServerOverride",
+                "");
+
+            SetCelesteNetProperty(
+                "Server",
+                address);
+
+            SaveCelesteNetSettings();
+
+            SetCelesteNetProperty(
+                "Connected",
+                true);
+        } catch (Exception e) {
+            Logger.Log(
+                LogLevel.Error,
+                "MobileMultiplayer",
+                $"Could not connect to '{address}': {e}");
+        }
+    }
 
     private static List<ServerEntry> BuildServerList() {
-        Dictionary<string, ServerSource> servers = new(StringComparer.OrdinalIgnoreCase);
-        void Add(string address, ServerSource source) {
-            address = NormalizeServer(address);
-            if (string.IsNullOrWhiteSpace(address))
+        Dictionary<string, ServerSource> values =
+            new(
+                StringComparer.OrdinalIgnoreCase);
+
+        void Add(
+            string address,
+            ServerSource source) {
+
+            address =
+                NormalizeServer(address);
+
+            if (address.Length == 0) {
                 return;
-            if (!servers.ContainsKey(address) || source == ServerSource.Lan)
-                servers[address] = source;
+            }
+
+            if (!values.ContainsKey(address) ||
+                source == ServerSource.Lan ||
+                source == ServerSource.Wrapper) {
+
+                values[address] =
+                    source;
+            }
         }
 
-        Add(CelesteNetClientSettings.DefaultServer, ServerSource.Default);
-        try {
-            CelesteNetClientSettings cn = CelesteNetClientModule.Settings;
-            Add(cn.Server, ServerSource.CelesteNet);
-            foreach (string extra in cn.ExtraServers ?? Array.Empty<string>())
-                Add(extra, ServerSource.CelesteNet);
-        } catch {
+        Add(
+            GetCelesteNetDefaultServer(),
+            ServerSource.Official);
+
+        Add(
+            GetCelesteNetString(
+                "Server",
+                ""),
+            ServerSource.CelesteNet);
+
+        foreach (string server in
+            GetCelesteNetStringArray(
+                "ExtraServers")) {
+
+            Add(
+                server,
+                ServerSource.CelesteNet);
         }
-        foreach (string custom in Settings.CustomServers ?? Array.Empty<string>())
-            Add(custom, ServerSource.Custom);
+
+        foreach (string server in
+            Settings.CustomServers ??
+            Array.Empty<string>()) {
+
+            Add(
+                server,
+                ServerSource.Custom);
+        }
+
         lock (DiscoveryLock) {
-            foreach (string lan in discoveredLanServers)
-                Add(lan, ServerSource.Lan);
+            foreach (string server in
+                discoveredLanServers) {
+
+                Add(
+                    server,
+                    ServerSource.Lan);
+            }
         }
 
-        return servers.Select(kv => new ServerEntry(kv.Key, kv.Value))
-            .OrderByDescending(s => s.Source == ServerSource.Lan)
-            .ThenBy(s => s.Source)
-            .ThenBy(s => s.Address, StringComparer.OrdinalIgnoreCase)
+        foreach (string server in
+            MobileBridgeProxy.DiscoveredServers) {
+
+            Add(
+                server,
+                ServerSource.Wrapper);
+        }
+
+        return values
+            .Select(pair =>
+                new ServerEntry(
+                    pair.Key,
+                    pair.Value))
+            .OrderBy(entry =>
+                entry.Source switch {
+                    ServerSource.Official => 0,
+                    ServerSource.Wrapper => 1,
+                    ServerSource.Lan => 2,
+                    ServerSource.Custom => 3,
+                    _ => 4
+                })
+            .ThenBy(
+                entry => entry.Address,
+                StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
     private static void StartLanDiscovery() {
-        if (OperatingSystem.IsBrowser() || discoveryRunning)
+        if (discoveryRunning) {
             return;
+        }
+
+        // Browser/WASM networking cannot perform a raw local subnet TCP scan.
+        // The native wrapper can supply discovered server endpoints through
+        // MobileBridge.GetCelesteNetServers().
+        if (OperatingSystem.IsBrowser()) {
+            discoveryRefreshPending = true;
+            return;
+        }
 
         discoveryRunning = true;
+
         Task.Run(async () => {
-            List<string> found = new();
+            List<string> found =
+                new();
+
             try {
-                IPAddress local = GetLocalIPv4();
+                IPAddress local =
+                    GetLocalIPv4();
+
                 if (local != null) {
-                    byte[] bytes = local.GetAddressBytes();
-                    int[] ports = Settings.HostPort == 17230 ? new[] { 17230 } : new[] { 17230, Settings.HostPort };
-                    using SemaphoreSlim gate = new(32);
-                    List<Task> tasks = new();
-                    for (int host = 1; host <= 254; host++) {
-                        if (host == bytes[3])
+                    byte[] bytes =
+                        local.GetAddressBytes();
+
+                    int[] ports =
+                        Settings.HostPort == 17230
+                            ? new[] {
+                                17230
+                            }
+                            : new[] {
+                                17230,
+                                Settings.HostPort
+                            };
+
+                    using SemaphoreSlim gate =
+                        new(32);
+
+                    List<Task> tasks =
+                        new();
+
+                    for (int host = 1;
+                        host <= 254;
+                        host++) {
+
+                        if (host == bytes[3]) {
                             continue;
-                        foreach (int port in ports.Distinct()) {
-                            string ip = $"{bytes[0]}.{bytes[1]}.{bytes[2]}.{host}";
-                            int capturedPort = port;
-                            tasks.Add(Task.Run(async () => {
-                                await gate.WaitAsync().ConfigureAwait(false);
-                                try {
-                                    using TcpClient client = new(AddressFamily.InterNetwork);
-                                    using CancellationTokenSource timeout = new(TimeSpan.FromMilliseconds(220));
-                                    try {
-                                        await client.ConnectAsync(ip, capturedPort, timeout.Token).ConfigureAwait(false);
-                                        if (client.Connected) {
-                                            lock (found)
-                                                found.Add(capturedPort == 17230 ? ip : $"{ip}:{capturedPort}");
+                        }
+
+                        foreach (int port in
+                            ports.Distinct()) {
+
+                            string ip =
+                                $"{bytes[0]}.{bytes[1]}.{bytes[2]}.{host}";
+
+                            int capturedPort =
+                                port;
+
+                            tasks.Add(
+                                Task.Run(
+                                    async () => {
+                                        await gate
+                                            .WaitAsync()
+                                            .ConfigureAwait(false);
+
+                                        try {
+                                            using TcpClient client =
+                                                new(
+                                                    AddressFamily.InterNetwork);
+
+                                            using CancellationTokenSource timeout =
+                                                new(
+                                                    TimeSpan.FromMilliseconds(
+                                                        220));
+
+                                            try {
+                                                await client
+                                                    .ConnectAsync(
+                                                        ip,
+                                                        capturedPort,
+                                                        timeout.Token)
+                                                    .ConfigureAwait(false);
+
+                                                if (client.Connected) {
+                                                    lock (found) {
+                                                        found.Add(
+                                                            capturedPort == 17230
+                                                                ? ip
+                                                                : $"{ip}:{capturedPort}");
+                                                    }
+                                                }
+                                            } catch {
+                                            }
+                                        } finally {
+                                            gate.Release();
                                         }
-                                    } catch {
-                                    }
-                                } finally {
-                                    gate.Release();
-                                }
-                            }));
+                                    }));
                         }
                     }
-                    await Task.WhenAll(tasks).ConfigureAwait(false);
+
+                    await Task
+                        .WhenAll(tasks)
+                        .ConfigureAwait(false);
                 }
             } catch (Exception e) {
-                Logger.Log(LogLevel.Warn, "MobileMultiplayer", $"LAN discovery failed: {e.Message}");
+                Logger.Log(
+                    LogLevel.Warn,
+                    "MobileMultiplayer",
+                    $"LAN discovery failed: {e.Message}");
             } finally {
                 lock (DiscoveryLock) {
-                    discoveredLanServers = found.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(s => s).ToList();
+                    discoveredLanServers =
+                        found
+                        .Distinct(
+                            StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(value =>
+                            value)
+                        .ToList();
                 }
+
                 discoveryRunning = false;
                 discoveryRefreshPending = true;
             }
@@ -527,342 +1226,483 @@ public sealed class MobileMultiplayerModule : EverestModule {
 
     private static IPAddress GetLocalIPv4() {
         try {
-            return Dns.GetHostEntry(Dns.GetHostName()).AddressList
-                .FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(a));
+            return Dns
+                .GetHostEntry(
+                    Dns.GetHostName())
+                .AddressList
+                .FirstOrDefault(address =>
+                    address.AddressFamily ==
+                        AddressFamily.InterNetwork &&
+                    !IPAddress.IsLoopback(
+                        address));
         } catch {
             return null;
         }
     }
 
-    private static string GetBestLocalAddress() => GetLocalIPv4()?.ToString() ?? "127.0.0.1";
+    private static void OnEngineUpdate(
+        On.Monocle.Engine.orig_Update orig,
+        Engine engine,
+        GameTime gameTime) {
 
-    private static void StartHost(bool joinAfterStart) {
-        lock (HostLock) {
-            if (hostRunning || hostStarting)
-                return;
-            hostStarting = true;
-            hostJoinRequested = joinAfterStart;
-            hostStatus = "STARTING SERVER...";
+        orig(
+            engine,
+            gameTime);
+
+        if (joinWhenHostReady &&
+            MobileBridgeProxy.HostRunning) {
+
+            joinWhenHostReady = false;
+
+            Scene scene =
+                Engine.Scene;
+
+            if (scene != null) {
+                scene.OnEndOfFrame += () =>
+                    ConnectToServer(
+                        $"127.0.0.1:{Settings.HostPort}");
+            }
         }
 
-        hostedServerThread = new Thread(() => {
-            object server = null;
-            try {
-                EmbeddedServerRuntime.InstallResolver();
-                Assembly assembly = EmbeddedServerRuntime.LoadAssembly("CelesteNet.Server");
-                if (assembly == null)
-                    throw new FileNotFoundException("CelesteNet.Server.dll was not embedded. Build CelesteNet.Server before building MobileMultiplayer.");
+        if (discoveryRefreshPending) {
+            discoveryRefreshPending = false;
 
-                Type settingsType = assembly.GetType("Celeste.Mod.CelesteNet.Server.CelesteNetServerSettings", throwOnError: true);
-                Type serverType = assembly.GetType("Celeste.Mod.CelesteNet.Server.CelesteNetServer", throwOnError: true);
-                object serverSettings = Activator.CreateInstance(settingsType);
+            if (currentScreen == ScreenKind.Join &&
+                currentMenu?.Scene != null) {
 
-                string root = GetServerDataDirectory();
-                string modules = Path.Combine(root, "Modules");
-                string configs = Path.Combine(root, "ModuleConfigs");
-                string users = Path.Combine(root, "UserData");
-                string packets = Path.Combine(root, "packetDump");
-                Directory.CreateDirectory(modules);
-                Directory.CreateDirectory(configs);
-                Directory.CreateDirectory(users);
-                Directory.CreateDirectory(packets);
+                Scene scene =
+                    Engine.Scene;
 
-                SetProperty(settingsType, serverSettings, "ModuleRoot", modules);
-                SetProperty(settingsType, serverSettings, "ModuleConfigRoot", configs);
-                SetProperty(settingsType, serverSettings, "UserDataRoot", users);
-                SetProperty(settingsType, serverSettings, "PacketDumperDirectory", packets);
-                SetProperty(settingsType, serverSettings, "MainPort", Settings.HostPort);
-
-                server = Activator.CreateInstance(serverType, new object[] { serverSettings });
-                lock (HostLock)
-                    hostedServer = server;
-
-                serverType.GetMethod("Start", BindingFlags.Public | BindingFlags.Instance)!.Invoke(server, null);
-                lock (HostLock) {
-                    hostStarting = false;
-                    hostRunning = true;
-                    hostStatus = $"HOSTING ON PORT {Settings.HostPort}";
-                }
-
-                try {
-                    serverType.GetMethod("Wait", BindingFlags.Public | BindingFlags.Instance)!.Invoke(server, null);
-                } catch (TargetInvocationException e) when (e.InnerException is OperationCanceledException) {
-                } catch (OperationCanceledException) {
-                }
-            } catch (Exception e) {
-                Exception actual = e is TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : e;
-                Logger.Log(LogLevel.Error, "MobileMultiplayer", $"Host failed: {actual}");
-                lock (HostLock) {
-                    hostStatus = "HOST FAILED: " + actual.Message;
-                    hostJoinRequested = false;
-                }
-            } finally {
-                if (server is IDisposable disposable) {
-                    try { disposable.Dispose(); } catch { }
-                }
-                lock (HostLock) {
-                    if (ReferenceEquals(hostedServer, server))
-                        hostedServer = null;
-                    hostStarting = false;
-                    hostRunning = false;
-                    if (!hostStatus.StartsWith("HOST FAILED", StringComparison.Ordinal))
-                        hostStatus = "NOT HOSTING";
+                if (scene != null) {
+                    scene.OnEndOfFrame += () =>
+                        ShowJoin(
+                            startDiscovery: false);
                 }
             }
-        }) {
-            IsBackground = true,
-            Name = "MobileMultiplayer CelesteNet Host"
-        };
-        hostedServerThread.Start();
-    }
-
-    private static void StopHost() {
-        object server;
-        lock (HostLock) {
-            server = hostedServer;
-            hostJoinRequested = false;
-            if (server == null) {
-                hostStarting = false;
-                hostRunning = false;
-                hostStatus = "NOT HOSTING";
-                return;
-            }
-            hostStatus = "STOPPING SERVER...";
-        }
-
-        try {
-            if (server is IDisposable disposable)
-                disposable.Dispose();
-            else
-                server.GetType().GetMethod("Dispose", BindingFlags.Public | BindingFlags.Instance)?.Invoke(server, null);
-        } catch (Exception e) {
-            Logger.Log(LogLevel.Warn, "MobileMultiplayer", $"Error stopping host: {e.Message}");
         }
     }
 
-    private static void SetProperty(Type type, object instance, string propertyName, object value) {
-        PropertyInfo property = type.GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
-        if (property == null || !property.CanWrite)
-            throw new MissingMemberException(type.FullName, propertyName);
-        property.SetValue(instance, value);
+    private static bool IsMobileTweaksLoaded() {
+        return AppDomain.CurrentDomain
+            .GetAssemblies()
+            .Any(assembly =>
+                assembly.GetType(
+                    "Celeste.Mod.MobileTweaks.MobileTweaksModule",
+                    throwOnError: false) != null);
     }
 
-    private static string GetServerDataDirectory() {
-        string gamePath = null;
+    private static void NormalizeSettings() {
+        Settings.CustomServers ??=
+            Array.Empty<string>();
+
+        Settings.CustomServers =
+            Settings.CustomServers
+            .Select(NormalizeServer)
+            .Where(value =>
+                value.Length > 0)
+            .Distinct(
+                StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        Settings.HostPort =
+            Math.Clamp(
+                Settings.HostPort,
+                1024,
+                65535);
+    }
+
+    private static void SaveOurSettings() {
+        NormalizeSettings();
+
         try {
-            gamePath = typeof(Everest).GetProperty("PathGame", BindingFlags.Public | BindingFlags.Static)?.GetValue(null) as string;
+            Instance.SaveSettings();
         } catch {
         }
-        if (string.IsNullOrWhiteSpace(gamePath))
-            gamePath = AppContext.BaseDirectory;
-        string dir = Path.Combine(gamePath, "Saves", "MobileMultiplayerServer");
-        Directory.CreateDirectory(dir);
-        return dir;
     }
 
-    private static string NormalizeUsername(string value) {
-        string result = (value ?? string.Empty).Trim();
-        if (result.Length > 20)
-            result = result.Substring(0, 20);
-        return string.IsNullOrWhiteSpace(result) ? "Guest" : result;
+    private static string NormalizeServer(
+        string value) {
+
+        string server =
+            (value ?? "")
+            .Trim();
+
+        if (server.StartsWith(
+            "http://",
+            StringComparison.OrdinalIgnoreCase)) {
+
+            server =
+                server.Substring(7);
+        }
+
+        if (server.StartsWith(
+            "https://",
+            StringComparison.OrdinalIgnoreCase)) {
+
+            server =
+                server.Substring(8);
+        }
+
+        return server
+            .Trim()
+            .TrimEnd('/');
     }
 
-    private static string NormalizeServer(string value) {
-        string server = (value ?? string.Empty).Trim();
-        if (server.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
-            server = server.Substring(7);
-        if (server.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-            server = server.Substring(8);
-        server = server.Trim().TrimEnd('/');
-        return server;
+    private static object GetCelesteNetProperty(
+        string name) {
+
+        object settings =
+            GetCelesteNetSettings();
+
+        if (settings == null) {
+            return null;
+        }
+
+        try {
+            return settings
+                .GetType()
+                .GetProperty(
+                    name,
+                    BindingFlags.Instance |
+                    BindingFlags.Public |
+                    BindingFlags.NonPublic)
+                ?.GetValue(settings);
+        } catch {
+            return null;
+        }
+    }
+
+    private static void SetCelesteNetProperty(
+        string name,
+        object value) {
+
+        object settings =
+            GetCelesteNetSettings();
+
+        if (settings == null) {
+            return;
+        }
+
+        try {
+            PropertyInfo property =
+                settings
+                .GetType()
+                .GetProperty(
+                    name,
+                    BindingFlags.Instance |
+                    BindingFlags.Public |
+                    BindingFlags.NonPublic);
+
+            if (property?.CanWrite == true) {
+                property.SetValue(
+                    settings,
+                    value);
+            }
+        } catch (Exception e) {
+            Logger.Log(
+                LogLevel.Warn,
+                "MobileMultiplayer",
+                $"Could not set CelesteNet setting '{name}': {e.Message}");
+        }
+    }
+
+    private static bool GetCelesteNetBool(
+        string name) {
+
+        object value =
+            GetCelesteNetProperty(name);
+
+        return value is bool boolean &&
+            boolean;
+    }
+
+    private static string GetCelesteNetString(
+        string name,
+        string fallback) {
+
+        return GetCelesteNetProperty(name)
+            as string ??
+            fallback;
+    }
+
+    private static string[] GetCelesteNetStringArray(
+        string name) {
+
+        return GetCelesteNetProperty(name)
+            as string[] ??
+            Array.Empty<string>();
+    }
+
+    private static string GetCelesteNetDefaultServer() {
+        object settings =
+            GetCelesteNetSettings();
+
+        if (settings == null) {
+            return "celeste.0x0a.de";
+        }
+
+        try {
+            FieldInfo field =
+                settings
+                .GetType()
+                .GetField(
+                    "DefaultServer",
+                    BindingFlags.Static |
+                    BindingFlags.Public |
+                    BindingFlags.NonPublic);
+
+            return field?.GetValue(null)
+                as string ??
+                "celeste.0x0a.de";
+        } catch {
+            return "celeste.0x0a.de";
+        }
+    }
+
+    private static void SaveCelesteNetSettings() {
+        EverestModule module =
+            GetCelesteNetModule();
+
+        if (module == null) {
+            return;
+        }
+
+        try {
+            MethodInfo method =
+                module.GetType().GetMethod(
+                    "SaveSettings",
+                    BindingFlags.Instance |
+                    BindingFlags.Public |
+                    BindingFlags.NonPublic);
+
+            method?.Invoke(
+                module,
+                null);
+        } catch {
+        }
     }
 
     private sealed class ModalBackdrop : Entity {
         private readonly TextMenu menu;
-        public ModalBackdrop(TextMenu menu) {
-            this.menu = menu;
-            Tag = Tags.HUD | Tags.PauseUpdate;
-            Depth = menu.Depth + 1;
+
+        public ModalBackdrop(
+            TextMenu menu) {
+
+            this.menu =
+                menu;
+
+            Tag =
+                Tags.HUD |
+                Tags.PauseUpdate;
+
+            Depth =
+                menu.Depth + 1;
         }
+
         public override void Render() {
-            Draw.Rect(0, 0, 1920, 1080, Color.Black * 0.78f);
-            if (menu?.Scene == null)
+            Draw.Rect(
+                0f,
+                0f,
+                1920f,
+                1080f,
+                Color.Black * 0.78f);
+
+            if (menu?.Scene == null) {
                 return;
-            menu.RecalculateSize();
-            float w = Math.Min(1500f, menu.Width + 100f);
-            float h = Math.Min(980f, menu.Height + 80f);
-            Vector2 p = menu.Position;
-            Draw.Rect(p.X - w * 0.5f, p.Y - h * 0.5f, w, h, Color.Black * 0.94f);
-            Draw.HollowRect(p.X - w * 0.5f, p.Y - h * 0.5f, w, h, Color.White * 0.9f);
-        }
-    }
-
-    private sealed class OptionalPointerController : Entity {
-        private readonly TextMenu menu;
-        private float scrollAccumulator;
-        public OptionalPointerController(TextMenu menu) {
-            this.menu = menu;
-            Tag = Tags.HUD | Tags.PauseUpdate;
-            Depth = -2000001;
-        }
-        public override void Update() {
-            base.Update();
-            if (menu == null || menu.Scene == null || !menu.Visible || !menu.Focused || menu.Items == null || menu.Items.Count == 0)
-                return;
-
-            if (!OptionalMobileBridge.TouchAvailable)
-                return;
-
-            Vector2 pointer = OptionalMobileBridge.TouchPosition;
-            bool pressed = OptionalMobileBridge.ConsumeTouchTap();
-            float scroll = OptionalMobileBridge.ConsumeTouchScroll();
-            menu.RecalculateSize();
-            Vector2 origin = menu.Position - menu.Justify * new Vector2(menu.Width, menu.Height);
-
-            if (Math.Abs(scroll) > 34f)
-                menu.MoveSelection(scroll > 0 ? -1 : 1, true);
-
-            float itemY = origin.Y;
-            for (int i = 0; i < menu.Items.Count; i++) {
-                TextMenu.Item item = menu.Items[i];
-                if (item == null || !item.Visible)
-                    continue;
-                float h = item.Height();
-                float centerY = itemY + h * 0.5f;
-                float hitH = Math.Max(h, 80f);
-                if (item.Hoverable && pointer.X >= origin.X - 100f && pointer.X <= origin.X + menu.Width + 100f && pointer.Y >= centerY - hitH * 0.5f && pointer.Y <= centerY + hitH * 0.5f) {
-                    if (menu.Current != item) {
-                        menu.Current?.OnLeave?.Invoke();
-                        menu.Selection = i;
-                        item.OnEnter?.Invoke();
-                        item.SelectWiggler?.Start();
-                    }
-                    if (pressed) {
-                        item.ConfirmPressed();
-                        item.OnPressed?.Invoke();
-                    }
-                    return;
-                }
-                itemY += h + menu.ItemSpacing;
             }
+
+            menu.RecalculateSize();
+
+            float width =
+                Math.Min(
+                    1500f,
+                    menu.Width + 100f);
+
+            float height =
+                Math.Min(
+                    980f,
+                    menu.Height + 80f);
+
+            Vector2 position =
+                menu.Position;
+
+            Draw.Rect(
+                position.X - width * 0.5f,
+                position.Y - height * 0.5f,
+                width,
+                height,
+                Color.Black * 0.94f);
+
+            Draw.HollowRect(
+                position.X - width * 0.5f,
+                position.Y - height * 0.5f,
+                width,
+                height,
+                Color.White * 0.9f);
         }
     }
 
     private sealed class WrappedTextItem : TextMenu.Item {
         private readonly FancyText.Text text;
-        public WrappedTextItem(string value, float width) {
+
+        public WrappedTextItem(
+            string value,
+            float width) {
+
             Selectable = false;
-            text = FancyText.Parse(value ?? string.Empty, (int)width, 100);
+
+            text =
+                FancyText.Parse(
+                    value ?? "",
+                    (int)width,
+                    100);
         }
-        public override float Height() => text.Lines * ActiveFont.LineHeight * 0.55f + 30f;
-        public override float LeftWidth() => 920f;
-        public override void Render(Vector2 position, bool highlighted) {
-            text.Draw(position + new Vector2(Container.Width * 0.5f, 0), new Vector2(0.5f, 0.5f), Vector2.One * 0.55f, Container.Alpha);
+
+        public override float Height() {
+            return text.Lines *
+                ActiveFont.LineHeight *
+                0.55f +
+                30f;
+        }
+
+        public override float LeftWidth() {
+            return 920f;
+        }
+
+        public override void Render(
+            Vector2 position,
+            bool highlighted) {
+
+            text.Draw(
+                position +
+                new Vector2(
+                    Container.Width * 0.5f,
+                    0f),
+                new Vector2(
+                    0.5f,
+                    0.5f),
+                Vector2.One * 0.55f,
+                Container.Alpha);
         }
     }
 
-    private static class OptionalMobileBridge {
+    private static class MobileBridgeProxy {
+        private static Type apiType;
         private static bool resolved;
-        private static PropertyInfo touchAvailable;
-        private static MethodInfo consumeTap;
-        private static MethodInfo touchX;
-        private static MethodInfo touchY;
-        private static MethodInfo consumeScroll;
 
-        public static bool TouchAvailable {
-            get {
-                Resolve();
-                try { return touchAvailable != null && (bool)touchAvailable.GetValue(null); }
-                catch { return false; }
-            }
-        }
-        public static Vector2 TouchPosition {
-            get {
-                Resolve();
-                try {
-                    return new Vector2(
-                        Convert.ToSingle(touchX?.Invoke(null, null) ?? -1f),
-                        Convert.ToSingle(touchY?.Invoke(null, null) ?? -1f));
-                } catch { return new Vector2(-1, -1); }
-            }
-        }
-        public static bool ConsumeTouchTap() {
-            Resolve();
-            try { return consumeTap != null && (bool)consumeTap.Invoke(null, null); }
-            catch { return false; }
-        }
-        public static float ConsumeTouchScroll() {
-            Resolve();
-            try { return Convert.ToSingle(consumeScroll?.Invoke(null, null) ?? 0f); }
-            catch { return 0f; }
-        }
         private static void Resolve() {
-            if (resolved)
+            if (resolved) {
                 return;
+            }
+
             resolved = true;
-            Type api = AppDomain.CurrentDomain.GetAssemblies()
-                .Select(a => a.GetType("Celeste.Mod.MobileBridge.MobileBridgeApi", false))
-                .FirstOrDefault(t => t != null);
-            if (api == null)
-                return;
-            touchAvailable = api.GetProperty("TouchAvailable", BindingFlags.Public | BindingFlags.Static);
-            consumeTap = api.GetMethod("ConsumeTouchTap", BindingFlags.Public | BindingFlags.Static);
-            touchX = api.GetMethod("TouchX", BindingFlags.Public | BindingFlags.Static);
-            touchY = api.GetMethod("TouchY", BindingFlags.Public | BindingFlags.Static);
-            consumeScroll = api.GetMethod("ConsumeTouchScroll", BindingFlags.Public | BindingFlags.Static);
-        }
-    }
 
-    private static class EmbeddedServerRuntime {
-        private const string ResourcePrefix = "MobileMultiplayer.EmbeddedServer.";
-        private static readonly object Sync = new();
-        private static readonly Dictionary<string, Assembly> Loaded = new(StringComparer.OrdinalIgnoreCase);
-        private static bool resolverInstalled;
-
-        public static void InstallResolver() {
-            lock (Sync) {
-                if (resolverInstalled)
-                    return;
-                resolverInstalled = true;
-                AppDomain.CurrentDomain.AssemblyResolve += Resolve;
-            }
+            apiType =
+                AppDomain.CurrentDomain
+                .GetAssemblies()
+                .Select(assembly =>
+                    assembly.GetType(
+                        "Celeste.Mod.MobileBridge.MobileBridgeApi",
+                        throwOnError: false))
+                .FirstOrDefault(type =>
+                    type != null);
         }
 
-        public static Assembly LoadAssembly(string simpleName) {
-            Assembly existing = AppDomain.CurrentDomain.GetAssemblies()
-                .FirstOrDefault(a => string.Equals(a.GetName().Name, simpleName, StringComparison.OrdinalIgnoreCase));
-            if (existing != null)
-                return existing;
+        public static bool HostRunning {
+            get {
+                Resolve();
 
-            lock (Sync) {
-                if (Loaded.TryGetValue(simpleName, out Assembly cached))
-                    return cached;
-                string resource = typeof(MobileMultiplayerModule).Assembly.GetManifestResourceNames()
-                    .FirstOrDefault(n => n.StartsWith(ResourcePrefix, StringComparison.Ordinal) && n.EndsWith(simpleName + ".dll", StringComparison.OrdinalIgnoreCase));
-                if (resource == null)
-                    return null;
-                using Stream stream = typeof(MobileMultiplayerModule).Assembly.GetManifestResourceStream(resource);
-                if (stream == null)
-                    return null;
-                byte[] bytes = new byte[stream.Length];
-                int offset = 0;
-                while (offset < bytes.Length) {
-                    int read = stream.Read(bytes, offset, bytes.Length - offset);
-                    if (read <= 0)
-                        break;
-                    offset += read;
+                if (apiType == null) {
+                    return false;
                 }
-                Assembly loaded = Assembly.Load(bytes);
-                Loaded[simpleName] = loaded;
-                return loaded;
+
+                try {
+                    PropertyInfo property =
+                        apiType.GetProperty(
+                            "IsCelesteNetHostRunning",
+                            BindingFlags.Static |
+                            BindingFlags.Public);
+
+                    return property != null &&
+                        property.GetValue(null)
+                        is bool running &&
+                        running;
+                } catch {
+                    return false;
+                }
             }
         }
 
-        private static Assembly Resolve(object sender, ResolveEventArgs args) {
-            string name;
-            try { name = new AssemblyName(args.Name).Name; }
-            catch { return null; }
-            return string.IsNullOrWhiteSpace(name) ? null : LoadAssembly(name);
+        public static string[] DiscoveredServers {
+            get {
+                return Invoke(
+                    "GetCelesteNetServers",
+                    Array.Empty<string>());
+            }
+        }
+
+        public static bool StartHost(
+            int port) {
+
+            return Invoke(
+                "StartCelesteNetHost",
+                false,
+                port);
+        }
+
+        public static void StopHost() {
+            Resolve();
+
+            if (apiType == null) {
+                return;
+            }
+
+            try {
+                apiType
+                    .GetMethod(
+                        "StopCelesteNetHost",
+                        BindingFlags.Static |
+                        BindingFlags.Public)
+                    ?.Invoke(
+                        null,
+                        null);
+            } catch {
+            }
+        }
+
+        private static T Invoke<T>(
+            string methodName,
+            T fallback,
+            params object[] args) {
+
+            Resolve();
+
+            if (apiType == null) {
+                return fallback;
+            }
+
+            try {
+                MethodInfo method =
+                    apiType.GetMethod(
+                        methodName,
+                        BindingFlags.Static |
+                        BindingFlags.Public);
+
+                if (method == null) {
+                    return fallback;
+                }
+
+                object result =
+                    method.Invoke(
+                        null,
+                        args);
+
+                return result is T typed
+                    ? typed
+                    : fallback;
+            } catch {
+                return fallback;
+            }
         }
     }
 }
