@@ -2,6 +2,25 @@ plugins {
     id "com.android.application"
 }
 
+def repoRoot = rootProject.projectDir.parentFile
+def celesteRuntimeSource = file("${repoRoot}/CelesteRuntime")
+def celesteRuntimeStaged = file("${projectDir}/src/main/assets/CelesteRuntime")
+
+tasks.register("stageCelesteRuntimeAssets", Copy) {
+    from celesteRuntimeSource
+    into celesteRuntimeStaged
+    doFirst {
+        if (!celesteRuntimeSource.isDirectory()) {
+            throw new GradleException("Missing CelesteRuntime folder: ${celesteRuntimeSource}")
+        }
+        delete celesteRuntimeStaged
+    }
+}
+
+tasks.register("cleanStagedCelesteRuntimeAssets", Delete) {
+    delete celesteRuntimeStaged
+}
+
 android {
     namespace "com.unlim8ted.celeste"
     compileSdk 36
@@ -57,4 +76,13 @@ android {
 
 dependencies {
     implementation "org.mozilla.geckoview:geckoview:152.0.20260713164047"
+}
+
+afterEvaluate {
+    tasks.matching { it.name == "mergeDebugAssets" || it.name == "mergeReleaseAssets" }.configureEach {
+        dependsOn tasks.named("stageCelesteRuntimeAssets")
+    }
+    tasks.matching { it.name == "assembleDebug" || it.name == "assembleRelease" || it.name == "bundleDebug" || it.name == "bundleRelease" }.configureEach {
+        finalizedBy tasks.named("cleanStagedCelesteRuntimeAssets")
+    }
 }

@@ -17,6 +17,7 @@ import org.mozilla.geckoview.GeckoView;
 /* JADX INFO: loaded from: /tmp/decompiler/3b2e22f821a54ff88b995449039e2e9c/classes3.dex */
 public final class MainActivity extends Activity {
     private LocalAssetServer assetServer;
+    private AndroidBridge bridge;
     private GeckoRuntime runtime;
     private GeckoSession session;
 
@@ -28,7 +29,8 @@ public final class MainActivity extends Activity {
         root.setBackgroundColor(-16777216);
         setContentView(root);
         try {
-            this.assetServer = new LocalAssetServer(this, "CelesteRuntime");
+            this.bridge = new AndroidBridge(this);
+            this.assetServer = new LocalAssetServer(this, "CelesteRuntime", this.bridge);
             this.assetServer.start();
             File geckoConfig = writeGeckoConfig();
             GeckoRuntimeSettings settings = new GeckoRuntimeSettings.Builder().aboutConfigEnabled(true).consoleOutput(false).debugLogging(false).configFilePath(geckoConfig.getAbsolutePath()).build();
@@ -59,6 +61,10 @@ public final class MainActivity extends Activity {
         if (this.assetServer != null) {
             this.assetServer.stop();
             this.assetServer = null;
+        }
+        if (this.bridge != null) {
+            this.bridge.stop();
+            this.bridge = null;
         }
         super.onDestroy();
     }

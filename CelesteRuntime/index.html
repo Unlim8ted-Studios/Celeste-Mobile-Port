@@ -15,6 +15,81 @@
     <script src="data.js"></script>
     <script>
         (() => {
+            const syncBridge = (command, params = {}) => {
+                try {
+                    const query = new URLSearchParams(params).toString();
+                    const xhr = new XMLHttpRequest();
+                    xhr.open("GET", "/__android_bridge/" + encodeURIComponent(command) + (query ? "?" + query : ""), false);
+                    xhr.send();
+                    return xhr.status >= 200 && xhr.status < 300 ? xhr.responseText || "" : "";
+                } catch {
+                    return "";
+                }
+            };
+            const showDialog = (dialog) => {
+                try {
+                    if (dialog && !dialog.open) dialog.showModal();
+                } catch {
+                }
+            };
+            const touch = { x: -1, y: -1, tapped: false, scroll: 0 };
+            const setTouch = (event) => {
+                const point = event.changedTouches?.[0] || event.touches?.[0] || event;
+                if (!point) return;
+                touch.x = point.clientX;
+                touch.y = point.clientY;
+            };
+            addEventListener("pointermove", setTouch, { passive: true });
+            addEventListener("pointerdown", setTouch, { passive: true });
+            addEventListener("pointerup", (event) => {
+                setTouch(event);
+                touch.tapped = true;
+            }, { passive: true });
+            addEventListener("touchmove", setTouch, { passive: true });
+            addEventListener("touchend", (event) => {
+                setTouch(event);
+                touch.tapped = true;
+            }, { passive: true });
+            addEventListener("wheel", (event) => {
+                touch.scroll += event.deltaY;
+            }, { passive: true });
+            window.celesteAndroidHaptic = (strength, length) => syncBridge("haptic", { strength, length });
+            window.celesteAndroidOpenUrl = (url) => syncBridge("openUrl", { url });
+            window.celesteAndroidOpenModBrowser = () => {
+                showDialog(window.app?.modmenu || window.app?.fs);
+            };
+            window.celesteAndroidOpenSaveData = () => {
+                if (window.app?.savesmenu) showDialog(window.app.savesmenu);
+            };
+            window.celesteAndroidExportSave = () => window.celesteDownloadSave?.();
+            window.celesteAndroidLoadSave = () => window.celesteAndroidOpenSaveData();
+            window.celesteAndroidOpenFileManager = () => {
+                if (window.app?.fs) showDialog(window.app.fs);
+            };
+            window.celesteAndroidOpenLayoutEditor = () => window.dispatchEvent(new CustomEvent("celeste-open-layout-editor"));
+            window.celesteAndroidSetOption = (key, value) => {
+                try { localStorage.setItem("celeste.option." + key, String(value)); } catch {}
+            };
+            window.celesteAndroidConsumeTouchTap = () => {
+                const tapped = touch.tapped;
+                touch.tapped = false;
+                return tapped;
+            };
+            window.celesteAndroidTouchX = () => touch.x;
+            window.celesteAndroidTouchY = () => touch.y;
+            window.celesteAndroidConsumeTouchScroll = () => {
+                const scroll = touch.scroll;
+                touch.scroll = 0;
+                return scroll;
+            };
+            window.celesteAndroidStartCelesteNetHost = (port) => syncBridge("startHost", { port }) === "1";
+            window.celesteAndroidStopCelesteNetHost = () => syncBridge("stopHost");
+            window.celesteAndroidIsCelesteNetHostRunning = () => syncBridge("isHostRunning") === "1";
+            window.celesteAndroidGetCelesteNetServers = () => syncBridge("getServers");
+        })();
+    </script>
+    <script>
+        (() => {
             const levels = ["debug", "log", "info", "warn", "error"];
             const originals = {};
             const serialize = (value) => {

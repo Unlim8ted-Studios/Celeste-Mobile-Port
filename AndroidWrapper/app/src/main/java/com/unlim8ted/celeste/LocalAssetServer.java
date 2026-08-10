@@ -31,13 +31,15 @@ final class LocalAssetServer {
     private Thread acceptThread;
     private final AssetManager assets;
     private final String root;
+    private final NativeBridge nativeBridge;
     private volatile boolean running;
     private ServerSocket server;
     private final ExecutorService workers = Executors.newCachedThreadPool();
 
-    LocalAssetServer(Context context, String root) {
+    LocalAssetServer(Context context, String root, NativeBridge nativeBridge) {
         this.assets = context.getAssets();
         this.root = root;
+        this.nativeBridge = nativeBridge;
     }
 
     void start() throws IOException {
@@ -104,6 +106,16 @@ final class LocalAssetServer {
             if (rawTarget.startsWith("/__android_port_log")) {
                 Log.i(TAG, "JS " + Uri.decode(rawTarget));
                 sendText(out, 204, "No Content", "");
+                return;
+            }
+
+            if (rawTarget.startsWith("/__android_bridge/")) {
+                String target = rawTarget.substring("/__android_bridge/".length());
+                int queryStart = target.indexOf('?');
+                String command = Uri.decode(queryStart >= 0 ? target.substring(0, queryStart) : target);
+                String query = queryStart >= 0 ? target.substring(queryStart + 1) : "";
+                String response = this.nativeBridge == null ? "" : this.nativeBridge.handle(command, query);
+                sendText(out, 200, "OK", response == null ? "" : response);
                 return;
             }
 
@@ -182,6 +194,10 @@ final class LocalAssetServer {
             }
             index++;
         }
+    }
+
+    interface NativeBridge {
+        String handle(String command, String query);
     }
 
     private String sanitizePath(String rawPath) {
