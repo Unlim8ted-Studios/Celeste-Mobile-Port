@@ -1,11 +1,16 @@
 <div align="center">
-# Celeste Mobile Port
 
-Celeste + Everest on mobile, powered by threaded .NET WebAssembly and platform-specific wrappers
+<h1>Celeste Mobile Port</h1>
 
+<p><strong>Celeste + Everest on mobile, powered by threaded .NET WebAssembly and platform-specific wrappers</strong></p>
+
+<p>
 An unofficial mobile port focused on bringing a complete, mod-capable Celeste experience to phones and tablets with customizable touch controls, haptics, save management, multiplayer, map creation, and mobile-specific UI improvements.
+</p>
 
-Developed by "Unlim8ted Studios" (https://unlim8ted.com)
+<p>
+Developed by <a href="https://unlim8ted.com">Unlim8ted Studios</a>
+</p>
 
 </div>
 
