@@ -843,6 +843,7 @@ public sealed class MobileMultiplayerModule : EverestModule {
                 Tags.PauseUpdate,
             ItemSpacing = 12f
         };
+        menu.Depth = -2000000;
 
         menu.Add(
             new TextMenu.Header(title));

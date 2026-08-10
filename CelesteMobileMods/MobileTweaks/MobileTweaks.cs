@@ -326,9 +326,9 @@ public sealed class MobileTweaksModule : EverestModule {
                 continue;
             }
 
-            // Preserve unrelated third-party main-menu additions. If those
-            // cause overflow, Everest's "rows" mode lays them to the right.
-            Add(button);
+            // Keep the mobile home screen within the layout MouseUI targets.
+            // Unrelated mod entries remain available through Mod Options.
+            button.RemoveSelf();
         }
 
         bool changed =
@@ -340,10 +340,7 @@ public sealed class MobileTweaksModule : EverestModule {
             buttons.AddRange(ordered);
         }
 
-        string layoutMode =
-            buttons.Count > 6
-                ? "rows"
-                : "";
+        string layoutMode = "";
 
         if (!string.Equals(
             CoreModule.Settings.MainMenuMode,

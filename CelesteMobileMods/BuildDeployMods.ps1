@@ -64,6 +64,10 @@ $ContentDirectories = @(
     "Tutorials"
 )
 
+$ContentDirectoryAliases = @{
+    "Dialogue" = "Dialog"
+}
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -620,6 +624,20 @@ foreach ($mod in $DetectedMods) {
 
                 if (Test-Path -LiteralPath $sourceContent -PathType Container) {
                     $destinationContent = Join-Path $StagePath $contentDirectory
+
+                    Copy-Item `
+                        -LiteralPath $sourceContent `
+                        -Destination $destinationContent `
+                        -Recurse `
+                        -Force
+                }
+            }
+
+            foreach ($alias in $ContentDirectoryAliases.GetEnumerator()) {
+                $sourceContent = Join-Path $ModPath $alias.Key
+
+                if (Test-Path -LiteralPath $sourceContent -PathType Container) {
+                    $destinationContent = Join-Path $StagePath $alias.Value
 
                     Copy-Item `
                         -LiteralPath $sourceContent `

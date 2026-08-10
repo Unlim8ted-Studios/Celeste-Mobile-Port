@@ -170,6 +170,7 @@ public sealed class MobileBridgeModule : EverestModule {
                 Tags.PauseUpdate,
             ItemSpacing = 12f
         };
+        menu.Depth = parent.Depth - 2;
 
         menu.Add(
             new TextMenu.Header(
@@ -378,6 +379,7 @@ public sealed class MobileBridgeModule : EverestModule {
                 Tags.PauseUpdate,
             ItemSpacing = 12f
         };
+        popup.Depth = -2000000;
 
         popup.Add(
             new TextMenu.Header(

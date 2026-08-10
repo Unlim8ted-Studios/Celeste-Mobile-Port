@@ -282,6 +282,7 @@ public sealed class BetterMapEditorModule : EverestModule {
             Tag = Tags.HUD,
             ItemSpacing = 12f
         };
+        menu.Depth = -2000000;
         menu.Add(new TextMenu.Header(title));
 
         ModalBackdrop backdrop = new(menu);

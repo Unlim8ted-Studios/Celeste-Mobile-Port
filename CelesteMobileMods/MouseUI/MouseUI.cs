@@ -11,7 +11,10 @@ using Monocle;
 namespace Celeste.Mod.MouseUI;
 
 public sealed class MouseUIModule : EverestModule {
-    private static float scrollAccumulator;
+    private static TextMenu hoveredTextMenu;
+    private static int hoveredTextMenuItem = -1;
+    private static readonly Dictionary<TextMenu, float> textMenuScrollOffsets = new();
+    private static readonly Dictionary<TextMenu, List<RenderedTextMenuItem>> renderedTextMenuItems = new();
     private static Vector2 desktopDragStart;
     private static bool desktopPotentialTap;
     private static bool desktopTapPending;
@@ -19,11 +22,14 @@ public sealed class MouseUIModule : EverestModule {
     private static bool previousMInputDisabled;
     private static bool backPromptVisibleThisRender;
     private static bool backPromptVisibleForInput;
+    private static BackButtonOverlay backButtonOverlay;
 
     public override void Load() {
         Engine.Instance.IsMouseVisible = true;
 
         On.Celeste.TextMenu.Update += OnTextMenuUpdate;
+        On.Celeste.TextMenu.Render += OnTextMenuRender;
+        On.Celeste.TextMenu.Item.Render += OnTextMenuItemRender;
         On.Celeste.OuiMainMenu.Update += OnMainMenuUpdate;
         On.Celeste.OuiFileSelect.Update += OnFileSelectUpdate;
         On.Celeste.OuiChapterSelect.Update += OnChapterSelectUpdate;
@@ -38,6 +44,8 @@ public sealed class MouseUIModule : EverestModule {
 
     public override void Unload() {
         On.Celeste.TextMenu.Update -= OnTextMenuUpdate;
+        On.Celeste.TextMenu.Render -= OnTextMenuRender;
+        On.Celeste.TextMenu.Item.Render -= OnTextMenuItemRender;
         On.Celeste.OuiMainMenu.Update -= OnMainMenuUpdate;
         On.Celeste.OuiFileSelect.Update -= OnFileSelectUpdate;
         On.Celeste.OuiChapterSelect.Update -= OnChapterSelectUpdate;
@@ -53,6 +61,13 @@ public sealed class MouseUIModule : EverestModule {
             MInput.Disabled = previousMInputDisabled;
             ownsMInputDisabled = false;
         }
+
+        hoveredTextMenu = null;
+        hoveredTextMenuItem = -1;
+        textMenuScrollOffsets.Clear();
+        renderedTextMenuItems.Clear();
+        backButtonOverlay?.RemoveSelf();
+        backButtonOverlay = null;
     }
 
     private static bool UsingTouch => OptionalMobileBridge.TouchAvailable;
@@ -62,6 +77,7 @@ public sealed class MouseUIModule : EverestModule {
         backPromptVisibleThisRender = false;
         desktopTapPending = false;
         orig(engine, gameTime);
+        EnsureBackButtonOverlay();
     }
 
     private static void OnMInputUpdate(On.Monocle.MInput.orig_Update orig) {
@@ -191,9 +207,52 @@ public sealed class MouseUIModule : EverestModule {
     }
 
     private static bool IsBackButton(Vector2 pos) {
-        return backPromptVisibleForInput &&
-            pos.X > 1650f &&
-            pos.Y > 950f;
+        return pos.X > 1620f &&
+            pos.Y > 920f;
+    }
+
+    private static void EnsureBackButtonOverlay() {
+        Scene scene = Engine.Scene;
+        if (scene == null) {
+            backButtonOverlay = null;
+            return;
+        }
+
+        if (backButtonOverlay?.Scene == scene) {
+            return;
+        }
+
+        backButtonOverlay?.RemoveSelf();
+        backButtonOverlay = new BackButtonOverlay();
+        scene.Add(backButtonOverlay);
+    }
+
+    private static bool ShouldShowBackButton() {
+        Scene scene = Engine.Scene;
+
+        return backPromptVisibleThisRender ||
+            backPromptVisibleForInput ||
+            scene?.Entities.Any(e => e is TextMenu menu && menu.Visible && menu.Focused) == true ||
+            scene is Overworld overworld &&
+            (overworld.IsCurrent<OuiMainMenu>() ||
+             overworld.IsCurrent<OuiFileSelect>() ||
+             overworld.IsCurrent<OuiChapterSelect>() ||
+             overworld.IsCurrent<OuiChapterPanel>() ||
+             overworld.IsCurrent<OuiJournal>() ||
+             overworld.IsCurrent<OuiCredits>());
+    }
+
+    private sealed class BackButtonOverlay : Entity {
+        public BackButtonOverlay() {
+            Tag = Tags.HUD | Tags.PauseUpdate;
+            Depth = -2100000000;
+        }
+
+        public override void Render() {
+            if (ShouldShowBackButton()) {
+                DrawBackButton();
+            }
+        }
     }
 
     private static void OnButtonUIRender(
@@ -211,7 +270,6 @@ public sealed class MouseUIModule : EverestModule {
         // attempts to render the normal MenuCancel / "Back X" prompt.
         if (ReferenceEquals(button, Input.MenuCancel)) {
             backPromptVisibleThisRender = true;
-            DrawBackButton();
             return;
         }
 
@@ -261,22 +319,43 @@ public sealed class MouseUIModule : EverestModule {
 
         Vector2 pointer = PointerPosition();
 
-        if (!ConsumePointerTap()) {
-            return;
+        MenuButton hovered = null;
+        foreach (MenuButton button in menu.Buttons) {
+            if (button != null && button.Visible && MainMenuHit(button, pointer.X, pointer.Y)) {
+                hovered = button;
+                break;
+            }
+        }
+
+        foreach (MenuButton button in menu.Buttons) {
+            if (button == null) {
+                continue;
+            }
+
+            bool selected = ReferenceEquals(button, hovered);
+            if (button.Selected != selected) {
+                button.Selected = selected;
+            }
         }
 
         if (IsBackButton(pointer)) {
+            if (!ConsumePointerTap()) {
+                return;
+            }
+
             if (menu.Overworld.Next == null) {
                 menu.Overworld.Goto<OuiTitleScreen>();
             }
             return;
         }
 
-        foreach (MenuButton button in menu.Buttons) {
-            if (button != null && button.Visible && MainMenuHit(button, pointer.X, pointer.Y)) {
-                button.Confirm();
-                return;
-            }
+        if (!ConsumePointerTap()) {
+            return;
+        }
+
+        if (hovered != null) {
+            hovered.Confirm();
+            return;
         }
     }
 
@@ -313,27 +392,6 @@ public sealed class MouseUIModule : EverestModule {
 
         Vector2 pointer = PointerPosition();
 
-        if (!fileSelect.SlotSelected) {
-            for (int i = 0; i < fileSelect.Slots.Length; i++) {
-                OuiFileSelectSlot slot = fileSelect.Slots[i];
-                if (slot == null || !slot.Visible) {
-                    continue;
-                }
-
-                if (pointer.X >= slot.Position.X - 520f &&
-                    pointer.X <= slot.Position.X + 520f &&
-                    pointer.Y >= slot.Position.Y - 160f &&
-                    pointer.Y <= slot.Position.Y + 160f) {
-
-                    if (fileSelect.SlotIndex != i) {
-                        fileSelect.SlotIndex = i;
-                        Audio.Play("event:/ui/main/savefile_rollover_down");
-                        ResetSaveSlotPositions(fileSelect);
-                    }
-                }
-            }
-        }
-
         if (!ConsumePointerTap()) {
             return;
         }
@@ -350,16 +408,29 @@ public sealed class MouseUIModule : EverestModule {
         }
 
         if (!fileSelect.SlotSelected) {
-            OuiFileSelectSlot slot = fileSelect.Slots[fileSelect.SlotIndex];
-            if (slot != null && slot.Visible &&
-                pointer.X >= slot.Position.X - 520f &&
-                pointer.X <= slot.Position.X + 520f &&
-                pointer.Y >= slot.Position.Y - 160f &&
-                pointer.Y <= slot.Position.Y + 160f) {
+            for (int i = 0; i < fileSelect.Slots.Length; i++) {
+                OuiFileSelectSlot slot = fileSelect.Slots[i];
+                if (slot == null || !slot.Visible) {
+                    continue;
+                }
 
-                Audio.Play("event:/ui/main/button_select");
-                Audio.Play("event:/ui/main/whoosh_savefile_out");
-                fileSelect.SelectSlot(reset: true);
+                if (pointer.X >= slot.Position.X - 520f &&
+                    pointer.X <= slot.Position.X + 520f &&
+                    pointer.Y >= slot.Position.Y - 160f &&
+                    pointer.Y <= slot.Position.Y + 160f) {
+
+                    if (fileSelect.SlotIndex != i) {
+                        fileSelect.SlotIndex = i;
+                        Audio.Play("event:/ui/main/savefile_rollover_down");
+                        ResetSaveSlotPositions(fileSelect);
+                        return;
+                    }
+
+                    Audio.Play("event:/ui/main/button_select");
+                    Audio.Play("event:/ui/main/whoosh_savefile_out");
+                    fileSelect.SelectSlot(reset: true);
+                    return;
+                }
             }
             return;
         }
@@ -448,6 +519,14 @@ public sealed class MouseUIModule : EverestModule {
         }
 
         Vector2 pointer = PointerPosition();
+
+        if (IsBackButton(pointer) && ConsumePointerTap()) {
+            if (chapterSelect.Overworld.Next == null) {
+                chapterSelect.Overworld.Goto<OuiMainMenu>();
+            }
+            return;
+        }
+
         FieldInfo iconsField = chapterSelect.GetType().GetField(
             "icons",
             BindingFlags.NonPublic | BindingFlags.Instance);
@@ -456,39 +535,7 @@ public sealed class MouseUIModule : EverestModule {
             return;
         }
 
-        for (int i = 0; i < icons.Count; i++) {
-            OuiChapterSelectIcon icon = icons[i];
-            if (icon == null ||
-                icon.Area > SaveData.Instance.UnlockedAreas ||
-                Vector2.Distance(pointer, icon.Position) >= 120f) {
-                continue;
-            }
-
-            int previous = SaveData.Instance.LastArea.ID;
-            if (previous != i) {
-                int direction = Math.Sign(i - previous);
-                SaveData.Instance.LastArea.ID = i;
-                icon.Hovered(direction);
-
-                chapterSelect.GetType()
-                    .GetMethod("EaseCamera", BindingFlags.NonPublic | BindingFlags.Instance)
-                    ?.Invoke(chapterSelect, null);
-
-                Audio.Play(direction > 0
-                    ? "event:/ui/world_map/icon/roll_right"
-                    : "event:/ui/world_map/icon/roll_left");
-            }
-            break;
-        }
-
         if (!ConsumePointerTap()) {
-            return;
-        }
-
-        if (IsBackButton(pointer)) {
-            if (chapterSelect.Overworld.Next == null) {
-                chapterSelect.Overworld.Goto<OuiMainMenu>();
-            }
             return;
         }
 
@@ -504,13 +551,40 @@ public sealed class MouseUIModule : EverestModule {
                 icon.Area <= SaveData.Instance.UnlockedAreas &&
                 Vector2.Distance(pointer, icon.Position) < 120f) {
 
-                Audio.Play("event:/ui/world_map/icon/select");
-                SaveData.Instance.LastArea.ID = i;
+                if (SaveData.Instance.LastArea.ID != i) {
+                    MoveChapterSelectionTo(chapterSelect, icons, i);
+                    return;
+                }
+
                 SaveData.Instance.LastArea.Mode = AreaMode.Normal;
+                Audio.Play("event:/ui/world_map/icon/select");
                 chapterSelect.Overworld.Goto<OuiChapterPanel>();
                 return;
             }
         }
+    }
+
+    private static void MoveChapterSelectionTo(
+        OuiChapterSelect chapterSelect,
+        List<OuiChapterSelectIcon> icons,
+        int target) {
+
+        int previous = SaveData.Instance.LastArea.ID;
+        if (previous == target) {
+            return;
+        }
+
+        int direction = Math.Sign(target - previous);
+        SaveData.Instance.LastArea.ID = target;
+        icons[target]?.Hovered(direction);
+
+        chapterSelect.GetType()
+            .GetMethod("EaseCamera", BindingFlags.NonPublic | BindingFlags.Instance)
+            ?.Invoke(chapterSelect, null);
+
+        Audio.Play(direction > 0
+            ? "event:/ui/world_map/icon/roll_right"
+            : "event:/ui/world_map/icon/roll_left");
     }
 
     private static void OnChapterPanelUpdate(
@@ -526,13 +600,13 @@ public sealed class MouseUIModule : EverestModule {
 
         orig(panel);
 
-        if (panel == null || !panel.Focused || !ConsumePointerTap()) {
+        if (panel == null || !panel.Focused) {
             return;
         }
 
         Vector2 pointer = PointerPosition();
 
-        if (IsBackButton(pointer)) {
+        if (IsBackButton(pointer) && ConsumePointerTap()) {
             Audio.Play("event:/ui/world_map/chapter/back");
             panel.Overworld.Goto<OuiChapterSelect>();
             return;
@@ -557,6 +631,10 @@ public sealed class MouseUIModule : EverestModule {
 
         Vector2 center = (Vector2)renderPositionProperty.GetValue(panel);
         int currentOption = (int)optionProperty.GetValue(panel);
+
+        if (!ConsumePointerTap()) {
+            return;
+        }
 
         for (int i = 0; i < options.Count; i++) {
             object option = options[i];
@@ -595,26 +673,43 @@ public sealed class MouseUIModule : EverestModule {
                     panel.Start((string)checkpointField?.GetValue(option));
                 }
             } else {
-                optionProperty.SetValue(panel, i);
-                Audio.Play("event:/ui/world_map/chapter/tab_roll_right");
-
-                FieldInfo wigglerField = type.GetField(
-                    "wiggler",
-                    BindingFlags.NonPublic | BindingFlags.Instance);
-                object wiggler = wigglerField?.GetValue(panel);
-                wiggler?.GetType().GetMethod("Start", Type.EmptyTypes)?.Invoke(wiggler, null);
-
-                FieldInfo selectingModeField = type.GetField(
-                    "selectingMode",
-                    BindingFlags.NonPublic | BindingFlags.Instance);
-
-                if (selectingModeField != null && (bool)selectingModeField.GetValue(panel)) {
-                    type.GetMethod("UpdateStats", BindingFlags.NonPublic | BindingFlags.Instance)
-                        ?.Invoke(panel, new object[] { true, null, null, null });
-                }
+                SetChapterPanelOption(
+                    panel,
+                    type,
+                    optionProperty,
+                    i,
+                    Math.Sign(i - currentOption));
             }
 
             return;
+        }
+    }
+
+    private static void SetChapterPanelOption(
+        OuiChapterPanel panel,
+        Type type,
+        PropertyInfo optionProperty,
+        int target,
+        int direction) {
+
+        optionProperty.SetValue(panel, target);
+        Audio.Play(direction > 0
+            ? "event:/ui/world_map/chapter/tab_roll_right"
+            : "event:/ui/world_map/chapter/tab_roll_left");
+
+        FieldInfo wigglerField = type.GetField(
+            "wiggler",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        object wiggler = wigglerField?.GetValue(panel);
+        wiggler?.GetType().GetMethod("Start", Type.EmptyTypes)?.Invoke(wiggler, null);
+
+        FieldInfo selectingModeField = type.GetField(
+            "selectingMode",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+
+        if (selectingModeField != null && (bool)selectingModeField.GetValue(panel)) {
+            type.GetMethod("UpdateStats", BindingFlags.NonPublic | BindingFlags.Instance)
+                ?.Invoke(panel, new object[] { true, null, null, null });
         }
     }
 
@@ -681,64 +776,89 @@ public sealed class MouseUIModule : EverestModule {
 
         orig(menu);
 
+        Vector2 pointer = PointerPosition();
+        if (IsBackButton(pointer) && ConsumePointerTap()) {
+            menu?.OnCancel?.Invoke();
+            return;
+        }
+
         if (menu == null || !menu.Focused || menu.Items == null || menu.Items.Count == 0) {
+            if (ReferenceEquals(hoveredTextMenu, menu)) {
+                hoveredTextMenu = null;
+                hoveredTextMenuItem = -1;
+            }
             return;
         }
 
         menu.RecalculateSize();
 
-        Vector2 pointer = PointerPosition();
         Vector2 origin = menu.Position - menu.Justify * new Vector2(menu.Width, menu.Height);
+        hoveredTextMenu = menu;
+        hoveredTextMenuItem = FindHoveredTextMenuItem(menu, pointer, origin);
 
         float scroll = ConsumePointerScroll();
         if (UsingTouch) {
             if (Math.Abs(scroll) > 34f) {
-                menu.MoveSelection(scroll > 0f ? -1 : 1, true);
+                ScrollTextMenu(menu, scroll);
             }
         } else {
-            scrollAccumulator += scroll;
-            if (Math.Abs(scrollAccumulator) >= 120f) {
-                menu.MoveSelection(scrollAccumulator > 0f ? -1 : 1, true);
-                scrollAccumulator = 0f;
+            if (Math.Abs(scroll) > 0f) {
+                ScrollTextMenu(menu, scroll);
             }
-        }
-
-        float itemY = origin.Y;
-        for (int i = 0; i < menu.Items.Count; i++) {
-            TextMenu.Item item = menu.Items[i];
-            if (item == null || !item.Visible) {
-                continue;
-            }
-
-            float height = item.Height();
-            float centerY = itemY + height * 0.5f;
-            float hitHeight = Math.Max(height, 80f);
-
-            if (item.Hoverable &&
-                pointer.X >= origin.X - 100f &&
-                pointer.X <= origin.X + menu.Width + 100f &&
-                pointer.Y >= centerY - hitHeight * 0.5f &&
-                pointer.Y <= centerY + hitHeight * 0.5f) {
-
-                // Do not mutate TextMenu.Selection on hover. Everest uses
-                // selection to compute menu scrolling, so moving the pointer
-                // must never scroll the menu. Only wheel/swipe changes it.
-                break;
-            }
-
-            itemY += height + menu.ItemSpacing;
         }
 
         if (!ConsumePointerTap()) {
             return;
         }
 
-        if (IsBackButton(pointer)) {
-            menu.OnCancel?.Invoke();
+        if (hoveredTextMenuItem >= 0 &&
+            hoveredTextMenuItem < menu.Items.Count) {
+
+            TextMenu.Item item = menu.Items[hoveredTextMenuItem];
+            if (item == null || !item.Visible || !item.Hoverable) {
+                return;
+            }
+
+            item.ConfirmPressed();
+            item.OnPressed?.Invoke();
+
+            if (pointer.X > origin.X + menu.Width - 160f) {
+                item.RightPressed();
+            } else if (pointer.X > origin.X + menu.Width - 320f &&
+                       pointer.X < origin.X + menu.Width - 160f) {
+                item.LeftPressed();
+            }
             return;
         }
+    }
 
-        itemY = origin.Y;
+    private static int FindHoveredTextMenuItem(
+        TextMenu menu,
+        Vector2 pointer,
+        Vector2 origin) {
+
+        if (renderedTextMenuItems.TryGetValue(menu, out List<RenderedTextMenuItem> rendered)) {
+            for (int i = 0; i < rendered.Count; i++) {
+                RenderedTextMenuItem hit = rendered[i];
+                if (hit.Item == null || !hit.Item.Visible || !hit.Item.Hoverable) {
+                    continue;
+                }
+
+                float centerY = hit.Position.Y + hit.Height * 0.5f;
+                float hitHeight = Math.Max(hit.Height, 80f);
+
+                if (pointer.X >= hit.Position.X - 100f &&
+                    pointer.X <= hit.Position.X + menu.Width + 100f &&
+                    pointer.Y >= centerY - hitHeight * 0.5f &&
+                    pointer.Y <= centerY + hitHeight * 0.5f) {
+
+                    return menu.Items.IndexOf(hit.Item);
+                }
+            }
+        }
+
+        textMenuScrollOffsets.TryGetValue(menu, out float offset);
+        float itemY = origin.Y + offset;
         for (int i = 0; i < menu.Items.Count; i++) {
             TextMenu.Item item = menu.Items[i];
             if (item == null || !item.Visible) {
@@ -755,25 +875,144 @@ public sealed class MouseUIModule : EverestModule {
                 pointer.Y >= centerY - hitHeight * 0.5f &&
                 pointer.Y <= centerY + hitHeight * 0.5f) {
 
-                if (menu.Selection != i) {
-                    menu.Current?.OnLeave?.Invoke();
-                    menu.Selection = i;
-                    item.OnEnter?.Invoke();
-                }
-
-                item.ConfirmPressed();
-                item.OnPressed?.Invoke();
-
-                if (pointer.X > origin.X + menu.Width - 160f) {
-                    item.RightPressed();
-                } else if (pointer.X > origin.X + menu.Width - 320f &&
-                           pointer.X < origin.X + menu.Width - 160f) {
-                    item.LeftPressed();
-                }
-                return;
+                return i;
             }
 
             itemY += height + menu.ItemSpacing;
+        }
+
+        return -1;
+    }
+
+    private static void ScrollTextMenu(
+        TextMenu menu,
+        float delta) {
+
+        if (menu == null) {
+            return;
+        }
+
+        textMenuScrollOffsets.TryGetValue(menu, out float offset);
+        offset += delta;
+        textMenuScrollOffsets[menu] = ClampTextMenuScroll(menu, offset);
+    }
+
+    private static float ClampTextMenuScroll(
+        TextMenu menu,
+        float offset) {
+
+        if (menu?.Items == null || menu.Items.Count == 0) {
+            return 0f;
+        }
+
+        float contentHeight = 0f;
+        int visible = 0;
+        foreach (TextMenu.Item item in menu.Items) {
+            if (item == null || !item.Visible) {
+                continue;
+            }
+
+            if (visible > 0) {
+                contentHeight += menu.ItemSpacing;
+            }
+
+            contentHeight += item.Height();
+            visible++;
+        }
+
+        float viewportHeight = Engine.Height - 180f;
+        if (contentHeight <= viewportHeight) {
+            return 0f;
+        }
+
+        float min = viewportHeight - contentHeight;
+        return Calc.Clamp(offset, min, 0f);
+    }
+
+    private static void OnTextMenuRender(
+        On.Celeste.TextMenu.orig_Render orig,
+        TextMenu menu) {
+
+        if (menu != null) {
+            renderedTextMenuItems[menu] = new List<RenderedTextMenuItem>();
+        }
+
+        if (menu == null) {
+            orig(menu);
+            return;
+        }
+
+        textMenuScrollOffsets.TryGetValue(menu, out float offset);
+        Vector2 originalPosition = menu.Position;
+        int originalSelection = menu.Selection;
+        bool originalAutoScroll = menu.AutoScroll;
+
+        if (Math.Abs(offset) > 0.01f) {
+            menu.Position = originalPosition + new Vector2(0f, offset);
+        }
+
+        if (ReferenceEquals(menu, hoveredTextMenu) &&
+            hoveredTextMenuItem >= 0 &&
+            hoveredTextMenuItem < menu.Items.Count) {
+
+            menu.Selection = hoveredTextMenuItem;
+            menu.AutoScroll = false;
+        }
+
+        try {
+            orig(menu);
+        } finally {
+            menu.Position = originalPosition;
+            menu.Selection = originalSelection;
+            menu.AutoScroll = originalAutoScroll;
+        }
+    }
+
+    private static void OnTextMenuItemRender(
+        On.Celeste.TextMenu.Item.orig_Render orig,
+        TextMenu.Item item,
+        Vector2 position,
+        bool highlighted) {
+
+        TextMenu menu = item?.Container;
+        if (item?.Container != null &&
+            ReferenceEquals(item.Container, hoveredTextMenu) &&
+            item.Container.Items != null &&
+            hoveredTextMenuItem >= 0 &&
+            hoveredTextMenuItem < item.Container.Items.Count &&
+            ReferenceEquals(item.Container.Items[hoveredTextMenuItem], item)) {
+
+            highlighted = true;
+        }
+
+        if (menu != null && menu.Items != null) {
+            if (!renderedTextMenuItems.TryGetValue(menu, out List<RenderedTextMenuItem> rendered)) {
+                rendered = new List<RenderedTextMenuItem>();
+                renderedTextMenuItems[menu] = rendered;
+            }
+
+            rendered.Add(new RenderedTextMenuItem(
+                item,
+                position,
+                item.Height()));
+        }
+
+        orig(item, position, highlighted);
+    }
+
+    private readonly struct RenderedTextMenuItem {
+        public readonly TextMenu.Item Item;
+        public readonly Vector2 Position;
+        public readonly float Height;
+
+        public RenderedTextMenuItem(
+            TextMenu.Item item,
+            Vector2 position,
+            float height) {
+
+            Item = item;
+            Position = position;
+            Height = height;
         }
     }
 
