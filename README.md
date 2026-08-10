@@ -17,12 +17,12 @@ Developed by <a href="https://unlim8ted.com">Unlim8ted Studios</a>
 ---
 
 > [!IMPORTANT]
-Celeste game files are not distributed with this repository.
-Building a playable copy requires files from a legally obtained copy of Celeste.
+> Celeste game files are not distributed with this repository.
+> Building a playable copy requires files from a legally obtained copy of Celeste.
 
 > [!NOTE]
-Project status: Active development.
-The threaded Celeste/Everest WebAssembly runtime, Android GeckoView host, touch-control system, save/mod persistence, and modular mobile integration are functional. Multiplayer hosting, the simplified in-game map editor, iOS support, and some modified-Everest compatibility work are still under active development.
+> **Project status: Active development.**
+> The threaded Celeste/Everest WebAssembly runtime, Android GeckoView host, touch-control system, save/mod persistence, and modular mobile integration are functional. Multiplayer hosting, the simplified in-game map editor, iOS support, and some modified-Everest compatibility work are still under active development.
 
 ## Overview
 
