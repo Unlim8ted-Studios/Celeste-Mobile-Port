@@ -1,57 +1,58 @@
-# BuildDeployMods.ps1
+# Build, package, and deploy every Everest code mod in CelesteMobileMods.
 #
-# Place this file directly inside:
+# CelesteNet is an EXTERNAL dependency:
+#   - this script does not build it
+#   - this script does not package it
+#   - this script does not delete it
+#   - this script does not deploy it
 #
-#   Celeste-Mobile-Port\CelesteMobileMods\
+# Expected repository structure:
 #
-# Repository structure:
+#   AndroidWrapper/
+#   IOSWrapper/
+#   Celeste/
+#   CelesteMobileMods/
+#       MobileBridge/
+#       MobileTweaks/
+#       MouseUI/
+#       MobileMultiplayer/
+#       BetterMapEditor/
+#       AnyOtherCodeMod/
 #
-#   AndroidWrapper\
-#   IOSWrapper\
-#   Celeste\
-#   CelesteMobileMods\
-#       BuildDeployMods.ps1
-#       MobileBridge\
-#       MobileTweaks\
-#       MouseUI\
-#       MobileMultiplayer\
-#       BetterMapEditor\
-#       AnyOtherMod\
+# A folder is auto-detected as a buildable mod when it contains BOTH:
+#   everest.yaml
+#   one or more top-level *.csproj files
 #
-# This script:
-#   - automatically detects every immediate folder containing:
-#       everest.yaml
-#       one or more *.csproj files
-#   - NEVER builds or modifies CelesteNet
-#   - NEVER rewrites everest.yaml
-#   - expects DLL: in everest.yaml to be a ROOT filename, e.g.
-#       DLL: MobileBridge.dll
-#   - builds every top-level .csproj in each detected mod folder
-#   - packages:
+# Each detected mod's own everest.yaml is trusted exactly as written.
+# The DLL: entry MUST name a root-level DLL, for example:
 #
-#       everest.yaml
-#       ModName.dll
-#       Dialog\
-#       Graphics\
-#       Maps\
-#       etc.
+#   DLL: MobileBridge.dll
 #
-#   - NEVER places the packaged DLL in /bin
-#   - only replaces installed ZIPs corresponding to detected workspace mods
-#   - leaves CelesteNet, Everest, and unrelated installed mods alone
+# The packaged ZIP therefore contains:
 #
-# Compatible with Windows PowerShell 5.1.
+#   everest.yaml
+#   MobileBridge.dll
+#   Dialog/...
+#   Graphics/...
+#   etc.
 
-param(
-    [string]$CelestePath = "D:\SteamLibrary\steamapps\common\Celeste"
-)
-
-Set-StrictMode -Version 2.0
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$ModsRoot = $PSScriptRoot
+$CelestePath = "D:\SteamLibrary\steamapps\common\Celeste"
 $ModsDest = Join-Path $CelestePath "Mods"
-$CelesteExe = Join-Path $CelestePath "Celeste.exe"
+
+# The script can live either:
+#   1. at repository root, beside CelesteMobileMods/
+#   2. inside CelesteMobileMods/
+$RepoOrModsRoot = $PSScriptRoot
+$NestedModsRoot = Join-Path $RepoOrModsRoot "CelesteMobileMods"
+
+if (Test-Path -LiteralPath $NestedModsRoot -PathType Container) {
+    $ModsRoot = $NestedModsRoot
+} else {
+    $ModsRoot = $RepoOrModsRoot
+}
 
 $ContentDirectories = @(
     "Ahorn",
@@ -64,31 +65,20 @@ $ContentDirectories = @(
     "Tutorials"
 )
 
-$ContentDirectoryAliases = @{
-    "Dialogue" = "Dialog"
-}
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-function Invoke-ModBuild {
+function Invoke-DotNetBuild {
     param(
         [Parameter(Mandatory = $true)]
         [string]$ProjectPath
     )
 
-    Write-Host ""
-    Write-Host ("Building {0}..." -f $ProjectPath) -ForegroundColor Cyan
+    Write-Host "Building $ProjectPath..." -ForegroundColor Cyan
 
     & dotnet build $ProjectPath -c Release --nologo -v minimal
 
     if ($LASTEXITCODE -ne 0) {
-        throw ("dotnet build failed for: {0}" -f $ProjectPath)
+        throw "dotnet build failed for: $ProjectPath"
     }
 }
-
 
 function Get-ManifestDllName {
     param(
@@ -96,56 +86,35 @@ function Get-ManifestDllName {
         [string]$YamlPath
     )
 
-    $yamlText = Get-Content -LiteralPath $YamlPath -Raw
+    $yaml = Get-Content -LiteralPath $YamlPath -Raw
 
-    # Accept:
-    #
-    #   DLL: MobileBridge.dll
-    #   DLL: "MobileBridge.dll"
-    #   DLL: 'MobileBridge.dll'
-    #
     $match = [regex]::Match(
-        $yamlText,
+        $yaml,
         '(?im)^\s*DLL\s*:\s*["'']?([^"''#\r\n]+?)["'']?\s*$'
     )
 
-    if (-not $match.Success) {
-        throw ("No DLL entry was found in {0}" -f $YamlPath)
+    if (!$match.Success) {
+        throw "No DLL: entry was found in $YamlPath"
     }
 
-    $dllName = $match.Groups[1].Value.Trim()
+    $dll = $match.Groups[1].Value.Trim()
 
-    if ([string]::IsNullOrWhiteSpace($dllName)) {
-        throw ("The DLL entry in {0} is empty." -f $YamlPath)
+    # The YAML is NOT rewritten. Instead, fail loudly if it doesn't describe
+    # the flat package layout this repository uses.
+    if ($dll.Contains("/") -or $dll.Contains("\")) {
+        throw "DLL must be at the ZIP root. '$YamlPath' currently says: DLL: $dll"
     }
 
-    # We intentionally require the DLL to be at ZIP root.
-    # DO NOT rewrite the YAML.
-    if ($dllName.Contains("/") -or $dllName.Contains("\")) {
-        throw (
-            "The DLL entry must be a root-level filename. {0} currently contains DLL: {1}" -f `
-                $YamlPath,
-                $dllName
-        )
-    }
-
-    $extension = [System.IO.Path]::GetExtension($dllName)
-
-    if (-not [string]::Equals(
-        $extension,
+    if (![string]::Equals(
+        [System.IO.Path]::GetExtension($dll),
         ".dll",
         [System.StringComparison]::OrdinalIgnoreCase
     )) {
-        throw (
-            "The DLL entry in {0} is not a .dll filename: {1}" -f `
-                $YamlPath,
-                $dllName
-        )
+        throw "DLL entry is not a .dll filename in $YamlPath: $dll"
     }
 
-    return $dllName
+    return $dll
 }
-
 
 function Get-BuiltDll {
     param(
@@ -156,22 +125,18 @@ function Get-BuiltDll {
         [string]$DllName
     )
 
-    # Common output locations first.
-    $preferredPaths = @(
-        (Join-Path $ModPath ("bin\{0}" -f $DllName)),
-        (Join-Path $ModPath ("bin\Release\{0}" -f $DllName)),
-        (Join-Path $ModPath ("bin\Release\net8.0\{0}" -f $DllName)),
-        (Join-Path $ModPath ("bin\Debug\{0}" -f $DllName)),
-        (Join-Path $ModPath ("bin\Debug\net8.0\{0}" -f $DllName))
+    $preferred = @(
+        (Join-Path $ModPath "bin\$DllName"),
+        (Join-Path $ModPath "bin\Release\net8.0\$DllName"),
+        (Join-Path $ModPath "bin\Release\$DllName")
     )
 
-    foreach ($candidate in $preferredPaths) {
+    foreach ($candidate in $preferred) {
         if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-            return (Resolve-Path -LiteralPath $candidate).Path
+            return $candidate
         }
     }
 
-    # Fallback: search anywhere under the build output folder.
     $binRoot = Join-Path $ModPath "bin"
 
     if (Test-Path -LiteralPath $binRoot -PathType Container) {
@@ -193,13 +158,8 @@ function Get-BuiltDll {
         }
     }
 
-    throw (
-        "Could not find built DLL {0} anywhere under {1}" -f `
-            $DllName,
-            $binRoot
-    )
+    throw "Could not find built DLL '$DllName' below $ModPath\bin"
 }
-
 
 function New-ModZip {
     param(
@@ -217,9 +177,7 @@ function New-ModZip {
         Remove-Item -LiteralPath $DestinationZip -Force
     }
 
-    $sourceRoot = (Resolve-Path -LiteralPath $SourceDirectory).Path
-
-    $fileStream = New-Object System.IO.FileStream(
+    $stream = [System.IO.File]::Open(
         $DestinationZip,
         [System.IO.FileMode]::CreateNew,
         [System.IO.FileAccess]::ReadWrite,
@@ -227,55 +185,25 @@ function New-ModZip {
     )
 
     try {
-        $archive = New-Object System.IO.Compression.ZipArchive(
-            $fileStream,
+        $archive = [System.IO.Compression.ZipArchive]::new(
+            $stream,
             [System.IO.Compression.ZipArchiveMode]::Create,
             $false
         )
 
         try {
-            $files = @(
-                Get-ChildItem `
-                    -LiteralPath $SourceDirectory `
-                    -File `
-                    -Recurse
-            )
+            $basePath = (Resolve-Path -LiteralPath $SourceDirectory).Path
 
-            foreach ($file in $files) {
-                $relativePath = $file.FullName.Substring($sourceRoot.Length)
+            foreach ($file in Get-ChildItem -LiteralPath $SourceDirectory -File -Recurse) {
+                $relative = $file.FullName.Substring($basePath.Length).TrimStart('\', '/')
+                $entryName = $relative.Replace('\', '/')
 
-                $relativePath = $relativePath.TrimStart(
-                    [char[]]@('\', '/')
-                )
-
-                # ZIP entry names should use forward slashes.
-                $entryName = $relativePath.Replace('\', '/')
-
-                Write-Host ("  ZIP: {0}" -f $entryName) -ForegroundColor DarkGray
-
-                $entry = $archive.CreateEntry(
+                [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                    $archive,
+                    $file.FullName,
                     $entryName,
                     [System.IO.Compression.CompressionLevel]::Optimal
-                )
-
-                $inputStream = $null
-                $outputStream = $null
-
-                try {
-                    $inputStream = [System.IO.File]::OpenRead($file.FullName)
-                    $outputStream = $entry.Open()
-
-                    $inputStream.CopyTo($outputStream)
-                }
-                finally {
-                    if ($null -ne $outputStream) {
-                        $outputStream.Dispose()
-                    }
-
-                    if ($null -ne $inputStream) {
-                        $inputStream.Dispose()
-                    }
-                }
+                ) | Out-Null
             }
         }
         finally {
@@ -283,12 +211,11 @@ function New-ModZip {
         }
     }
     finally {
-        $fileStream.Dispose()
+        $stream.Dispose()
     }
 }
 
-
-function Test-ModZip {
+function Assert-ModZip {
     param(
         [Parameter(Mandatory = $true)]
         [string]$ZipPath,
@@ -303,233 +230,135 @@ function Test-ModZip {
     $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
 
     try {
-        $entryNames = @(
-            $archive.Entries |
-            ForEach-Object {
-                $_.FullName
-            }
-        )
+        $entries = @($archive.Entries | ForEach-Object { $_.FullName })
 
-        Write-Host ""
-        Write-Host ("Archive contents for {0}:" -f $ZipPath) -ForegroundColor DarkCyan
-
-        foreach ($entryName in $entryNames) {
-            Write-Host ("  [{0}]" -f $entryName)
+        if ($entries -notcontains "everest.yaml") {
+            throw "Archive is missing root everest.yaml: $ZipPath"
         }
 
-        if ($entryNames -notcontains "everest.yaml") {
-            throw (
-                "Archive is missing everest.yaml at ZIP root: {0}" -f `
-                    $ZipPath
-            )
+        if ($entries -notcontains $DllName) {
+            throw "Archive is missing root DLL '$DllName': $ZipPath"
         }
 
-        if ($entryNames -notcontains $DllName) {
-            throw (
-                "Archive is missing root DLL {0}: {1}" -f `
-                    $DllName,
-                    $ZipPath
-            )
-        }
-
-        # Absolutely reject packaged DLLs under bin/.
-        $badDllEntries = @(
-            $entryNames |
-            Where-Object {
+        $nestedDlls = @(
+            $entries | Where-Object {
                 $_ -match '(^|/)bin/.*\.dll$'
             }
         )
 
-        if ($badDllEntries.Count -gt 0) {
-            throw (
-                "Archive incorrectly contains DLL files under bin/: {0}" -f `
-                    ($badDllEntries -join ", ")
-            )
+        if ($nestedDlls.Count -gt 0) {
+            throw "Archive incorrectly contains DLL(s) in /bin: $($nestedDlls -join ', ')"
         }
 
-        # Also reject Windows-style backslashes in ZIP entry names.
-        $badSlashEntries = @(
-            $entryNames |
-            Where-Object {
-                $_.Contains("\")
-            }
-        )
-
-        if ($badSlashEntries.Count -gt 0) {
-            throw (
-                "Archive contains invalid backslash ZIP paths: {0}" -f `
-                    ($badSlashEntries -join ", ")
-            )
-        }
-
-        Write-Host (
-            "Verified: everest.yaml and {0} are both at ZIP root." -f `
-                $DllName
-        ) -ForegroundColor Green
+        Write-Host "Verified ZIP root: everest.yaml + $DllName" -ForegroundColor DarkGreen
     }
     finally {
         $archive.Dispose()
     }
 }
 
-
-# ---------------------------------------------------------------------------
-# Validate environment
-# ---------------------------------------------------------------------------
-
-if (-not (Test-Path -LiteralPath $CelestePath -PathType Container)) {
-    throw (
-        "Celeste directory does not exist: {0}" -f `
-            $CelestePath
-    )
+if (!(Test-Path -LiteralPath $CelestePath -PathType Container)) {
+    throw "Celeste directory does not exist: $CelestePath"
 }
 
-if (-not (Test-Path -LiteralPath $CelesteExe -PathType Leaf)) {
-    throw (
-        "Celeste.exe was not found: {0}" -f `
-            $CelesteExe
-    )
+$CelesteExe = Join-Path $CelestePath "Celeste.exe"
+
+if (!(Test-Path -LiteralPath $CelesteExe -PathType Leaf)) {
+    throw "Celeste.exe was not found: $CelesteExe"
 }
 
-if (-not (Test-Path -LiteralPath $ModsRoot -PathType Container)) {
-    throw (
-        "CelesteMobileMods directory does not exist: {0}" -f `
-            $ModsRoot
-    )
+if (!(Test-Path -LiteralPath $ModsDest -PathType Container)) {
+    New-Item -ItemType Directory -Path $ModsDest -Force | Out-Null
 }
 
-if (-not (Test-Path -LiteralPath $ModsDest -PathType Container)) {
-    New-Item `
-        -ItemType Directory `
-        -Path $ModsDest `
-        -Force |
-    Out-Null
+if (!(Test-Path -LiteralPath $ModsRoot -PathType Container)) {
+    throw "CelesteMobileMods directory was not found: $ModsRoot"
 }
 
-if ($null -eq (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+if (!(Get-Command dotnet -ErrorAction SilentlyContinue)) {
     throw "dotnet was not found in PATH."
 }
 
-
-# ---------------------------------------------------------------------------
-# Detect source mods
-# ---------------------------------------------------------------------------
-
+# Auto-detect every immediate code-mod folder. No mod-name list is necessary.
+#
+# CelesteNet is explicitly excluded even if a source checkout is ever placed
+# beside these mods, because it is managed externally.
 $DetectedMods = @(
-    Get-ChildItem `
-        -LiteralPath $ModsRoot `
-        -Directory |
+    Get-ChildItem -LiteralPath $ModsRoot -Directory |
     Where-Object {
-        $directory = $_
-
-        $yamlPath = Join-Path $directory.FullName "everest.yaml"
-
-        $projects = @(
+        $_.Name -notmatch '^CelesteNet($|\.)' -and
+        (Test-Path -LiteralPath (Join-Path $_.FullName "everest.yaml") -PathType Leaf) -and
+        @(
             Get-ChildItem `
-                -LiteralPath $directory.FullName `
+                -LiteralPath $_.FullName `
                 -File `
                 -Filter "*.csproj" `
                 -ErrorAction SilentlyContinue
-        )
-
-        $isCelesteNet =
-            $directory.Name -match '^CelesteNet($|\.)'
-
-        (-not $isCelesteNet) -and
-        (Test-Path -LiteralPath $yamlPath -PathType Leaf) -and
-        ($projects.Count -gt 0)
+        ).Count -gt 0
     } |
     Sort-Object Name
 )
 
 if ($DetectedMods.Count -eq 0) {
-    throw (
-        "No mod folders containing both everest.yaml and a top-level .csproj were found in {0}" -f `
-            $ModsRoot
-    )
+    throw "No folders with both everest.yaml and a top-level .csproj were found in $ModsRoot"
 }
 
-Write-Host ""
-Write-Host (
-    "Detected {0} source mod(s):" -f `
-        $DetectedMods.Count
-) -ForegroundColor Green
+Write-Host "Detected $($DetectedMods.Count) source mod(s):" -ForegroundColor Green
 
 foreach ($mod in $DetectedMods) {
-    Write-Host ("  - {0}" -f $mod.Name)
+    Write-Host "  - $($mod.Name)"
 }
 
-Write-Host ""
-Write-Host "CelesteNet is external and will NOT be built, packaged, deleted, or deployed." -ForegroundColor Yellow
+Write-Host "CelesteNet is external and will NOT be built, removed, packaged, or deployed." -ForegroundColor DarkGray
 
+# Close Celeste first.
+Write-Host "Checking for running Celeste process..." -ForegroundColor Yellow
 
-# ---------------------------------------------------------------------------
-# Stop Celeste
-# ---------------------------------------------------------------------------
+$CelesteProc = Get-Process -Name "Celeste" -ErrorAction SilentlyContinue
 
-$runningCeleste = @(
-    Get-Process `
-        -Name "Celeste" `
-        -ErrorAction SilentlyContinue
-)
-
-if ($runningCeleste.Count -gt 0) {
-    Write-Host ""
+if ($CelesteProc) {
     Write-Host "Closing Celeste..." -ForegroundColor Yellow
+    $CelesteProc | Stop-Process -Force
 
-    $runningCeleste |
-    Stop-Process -Force
-
-    $tries = 0
-
-    while ($tries -lt 30) {
+    for ($i = 0; $i -lt 30; $i++) {
         Start-Sleep -Milliseconds 100
 
-        $stillRunning = @(
-            Get-Process `
-                -Name "Celeste" `
-                -ErrorAction SilentlyContinue
-        )
-
-        if ($stillRunning.Count -eq 0) {
+        if (!(Get-Process -Name "Celeste" -ErrorAction SilentlyContinue)) {
             break
         }
-
-        $tries++
     }
 
-    $stillRunning = @(
-        Get-Process `
-            -Name "Celeste" `
-            -ErrorAction SilentlyContinue
-    )
-
-    if ($stillRunning.Count -gt 0) {
-        throw "Celeste is still running."
+    if (Get-Process -Name "Celeste" -ErrorAction SilentlyContinue) {
+        throw "Celeste is still running after Stop-Process."
     }
 }
 
+# Remove only ZIPs corresponding to source mods that this script is rebuilding.
+# CelesteNet and unrelated installed mods are left completely untouched.
+Write-Host "Cleaning previously deployed workspace mod ZIPs..." -ForegroundColor Yellow
 
-# ---------------------------------------------------------------------------
-# Build/package/deploy
-# ---------------------------------------------------------------------------
+foreach ($mod in $DetectedMods) {
+    $deployedZip = Join-Path $ModsDest "$($mod.Name).zip"
 
-$Failures = New-Object System.Collections.Generic.List[string]
+    if (Test-Path -LiteralPath $deployedZip -PathType Leaf) {
+        Remove-Item -LiteralPath $deployedZip -Force
+    }
+}
 
+$Failures = [System.Collections.Generic.List[string]]::new()
 
 foreach ($mod in $DetectedMods) {
     $ModName = $mod.Name
     $ModPath = $mod.FullName
 
-    Write-Host ""
-    Write-Host ("=== Processing {0} ===" -f $ModName) -ForegroundColor Magenta
+    Write-Host "`n=== Processing $ModName ===" -ForegroundColor Magenta
 
     try {
         $YamlSource = Join-Path $ModPath "everest.yaml"
         $DllName = Get-ManifestDllName -YamlPath $YamlSource
 
-        Write-Host ("Manifest DLL: {0}" -f $DllName) -ForegroundColor DarkGray
-
+        # Build every top-level project in the folder.
+        # This intentionally does not assume a project naming convention.
         $Projects = @(
             Get-ChildItem `
                 -LiteralPath $ModPath `
@@ -538,163 +367,62 @@ foreach ($mod in $DetectedMods) {
             Sort-Object Name
         )
 
-        if ($Projects.Count -eq 0) {
-            throw (
-                "No top-level .csproj files found in {0}" -f `
-                    $ModPath
-            )
-        }
-
         foreach ($project in $Projects) {
-            Invoke-ModBuild -ProjectPath $project.FullName
+            Invoke-DotNetBuild -ProjectPath $project.FullName
         }
 
-        $BuiltDll = Get-BuiltDll `
-            -ModPath $ModPath `
-            -DllName $DllName
+        $DllSource = Get-BuiltDll -ModPath $ModPath -DllName $DllName
 
-        Write-Host (
-            "Built DLL found at: {0}" -f `
-                $BuiltDll
-        ) -ForegroundColor DarkGray
+        Write-Host "Using built DLL: $DllSource" -ForegroundColor DarkGray
+        Write-Host "Manifest DLL: $DllName" -ForegroundColor DarkGray
 
-
-        # Use Windows TEMP, not a folder inside the source mod.
-        # This prevents stale temp_dist/bin folders from being packaged.
-        $TempName = "celeste-mobile-mod-" + [Guid]::NewGuid().ToString("N")
-
-        $StagePath = Join-Path `
+        # Stage outside the project tree so a stale temp_dist/bin can never
+        # accidentally become part of the archive.
+        $TempPath = Join-Path `
             ([System.IO.Path]::GetTempPath()) `
-            $TempName
+            ("celeste-mobile-mod-" + [guid]::NewGuid().ToString("N"))
 
-        New-Item `
-            -ItemType Directory `
-            -Path $StagePath `
-            -Force |
-        Out-Null
+        New-Item -ItemType Directory -Path $TempPath -Force | Out-Null
 
         try {
-            # ---------------------------------------------------------------
-            # everest.yaml
-            #
-            # COPY EXACTLY.
-            # DO NOT MODIFY.
-            # ---------------------------------------------------------------
-
+            # Trust/copy the source YAML exactly as written.
             Copy-Item `
                 -LiteralPath $YamlSource `
-                -Destination (Join-Path $StagePath "everest.yaml") `
+                -Destination (Join-Path $TempPath "everest.yaml") `
                 -Force
 
-
-            # ---------------------------------------------------------------
-            # DLL
-            #
-            # COPY DIRECTLY TO STAGING ROOT.
-            #
-            # NO:
-            #   StagePath\bin\
-            #
-            # YES:
-            #   StagePath\MobileBridge.dll
-            # ---------------------------------------------------------------
-
-            $RootDllDestination = Join-Path $StagePath $DllName
-
+            # Root-level DLL. NO package bin/ directory.
             Copy-Item `
-                -LiteralPath $BuiltDll `
-                -Destination $RootDllDestination `
+                -LiteralPath $DllSource `
+                -Destination (Join-Path $TempPath $DllName) `
                 -Force
 
-
-            if (-not (Test-Path -LiteralPath $RootDllDestination -PathType Leaf)) {
-                throw (
-                    "DLL was not copied to staging root: {0}" -f `
-                        $RootDllDestination
-                )
-            }
-
-
-            # ---------------------------------------------------------------
-            # Everest content folders
-            # ---------------------------------------------------------------
-
+            # Include standard Everest content folders when present.
             foreach ($contentDirectory in $ContentDirectories) {
                 $sourceContent = Join-Path $ModPath $contentDirectory
 
                 if (Test-Path -LiteralPath $sourceContent -PathType Container) {
-                    $destinationContent = Join-Path $StagePath $contentDirectory
-
                     Copy-Item `
                         -LiteralPath $sourceContent `
-                        -Destination $destinationContent `
+                        -Destination $TempPath `
                         -Recurse `
                         -Force
                 }
             }
 
-            foreach ($alias in $ContentDirectoryAliases.GetEnumerator()) {
-                $sourceContent = Join-Path $ModPath $alias.Key
-
-                if (Test-Path -LiteralPath $sourceContent -PathType Container) {
-                    $destinationContent = Join-Path $StagePath $alias.Value
-
-                    Copy-Item `
-                        -LiteralPath $sourceContent `
-                        -Destination $destinationContent `
-                        -Recurse `
-                        -Force
-                }
-            }
-
-
-            # ---------------------------------------------------------------
-            # Package
-            # ---------------------------------------------------------------
-
-            $ZipPath = Join-Path $ModPath ($ModName + ".zip")
-
-            Write-Host ""
-            Write-Host (
-                "Packaging {0}..." -f `
-                    $ZipPath
-            ) -ForegroundColor Cyan
+            $ZipPath = Join-Path $ModPath "$ModName.zip"
 
             New-ModZip `
-                -SourceDirectory $StagePath `
+                -SourceDirectory $TempPath `
                 -DestinationZip $ZipPath
 
-
-            # ---------------------------------------------------------------
-            # Verify exact package structure
-            # ---------------------------------------------------------------
-
-            Test-ModZip `
+            Assert-ModZip `
                 -ZipPath $ZipPath `
                 -DllName $DllName
 
+            $DeployPath = Join-Path $ModsDest "$ModName.zip"
 
-            # ---------------------------------------------------------------
-            # Deploy
-            #
-            # Only replace THIS workspace mod.
-            #
-            # CelesteNet and unrelated installed mods are never touched.
-            # ---------------------------------------------------------------
-
-            $DeployPath = Join-Path $ModsDest ($ModName + ".zip")
-
-            if (Test-Path -LiteralPath $DeployPath -PathType Leaf) {
-                Remove-Item `
-                    -LiteralPath $DeployPath `
-                    -Force
-            }
-
-            Write-Host ""
-            Write-Host (
-                "Deploying to {0}" -f `
-                    $DeployPath
-            ) -ForegroundColor Yellow
+            Write-Host "Deploying $ModName.zip to $DeployPath..." -ForegroundColor Yellow
 
             Copy-Item `
                 -LiteralPath $ZipPath `
@@ -702,63 +430,32 @@ foreach ($mod in $DetectedMods) {
                 -Force
         }
         finally {
-            if (Test-Path -LiteralPath $StagePath) {
-                Remove-Item `
-                    -LiteralPath $StagePath `
-                    -Recurse `
-                    -Force `
-                    -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $TempPath) {
+                Remove-Item -LiteralPath $TempPath -Recurse -Force
             }
         }
 
-        Write-Host ""
-        Write-Host (
-            "{0} completed successfully." -f `
-                $ModName
-        ) -ForegroundColor Green
+        Write-Host "$ModName completed successfully." -ForegroundColor Green
     }
     catch {
-        $failureMessage = (
-            "{0} failed: {1}" -f `
-                $ModName,
-                $_.Exception.Message
-        )
-
-        $Failures.Add($failureMessage)
-
-        Write-Host ""
-        Write-Host $failureMessage -ForegroundColor Red
+        $message = "$ModName failed: $($_.Exception.Message)"
+        $Failures.Add($message)
+        Write-Host $message -ForegroundColor Red
     }
 }
 
-
-# ---------------------------------------------------------------------------
-# Finish
-# ---------------------------------------------------------------------------
-
 if ($Failures.Count -gt 0) {
-    Write-Host ""
-    Write-Host (
-        "Build/deploy completed with {0} failure(s):" -f `
-            $Failures.Count
-    ) -ForegroundColor Red
+    Write-Host "`nBuild/deploy completed with $($Failures.Count) failure(s):" -ForegroundColor Red
 
     foreach ($failure in $Failures) {
-        Write-Host ("  - {0}" -f $failure) -ForegroundColor Red
+        Write-Host "  - $failure" -ForegroundColor Red
     }
 
-    Write-Host ""
-    Write-Host "Celeste was NOT restarted because at least one mod failed." -ForegroundColor Yellow
-
+    Write-Host "`nCeleste was NOT restarted because at least one workspace mod failed." -ForegroundColor Yellow
     exit 1
 }
 
-
-Write-Host ""
-Write-Host "All detected mods built, packaged, and deployed successfully." -ForegroundColor Green
-Write-Host "CelesteNet was left untouched." -ForegroundColor Green
-
-Write-Host ""
+Write-Host "`nAll detected workspace mods built, packaged, and deployed successfully!" -ForegroundColor Green
 Write-Host "Restarting Celeste..." -ForegroundColor Yellow
 
 Start-Process `

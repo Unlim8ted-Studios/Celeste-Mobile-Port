@@ -1,0 +1,275 @@
+<!doctype html>
+<!--  Licensed to the .NET Foundation under one or more agreements. -->
+<!-- The .NET Foundation licenses this file to you under the MIT license. -->
+<html>
+
+<head>
+    <title>CelesteWasm</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <link rel="icon" type="image/png" href="assets/app.png" />
+    <link rel="prefetch" id="mountainsrc" href="assets/mountain.png">
+    <link rel="stylesheet" href="styles.css" />
+    <script src="cfg.js"></script>
+    <script src="data.js"></script>
+    <script>
+        (() => {
+            const levels = ["debug", "log", "info", "warn", "error"];
+            const originals = {};
+            const serialize = (value) => {
+                if (value instanceof Error) return value.stack || value.message || String(value);
+                if (typeof value === "string") return value;
+                try { return JSON.stringify(value); } catch { return String(value); }
+            };
+            const send = (level, args) => {
+                try {
+                    const message = Array.from(args).map(serialize).join(" ").slice(0, 1800);
+                    fetch("/__android_port_log?level=" + encodeURIComponent(level) + "&msg=" + encodeURIComponent(message), { cache: "no-store" }).catch(() => {});
+                } catch (e) {
+                    originals.log("Log error:", e);
+                }
+            };
+            for (const level of levels) {
+                originals[level] = console[level] ? console[level].bind(console) : console.log.bind(console);
+                console[level] = (...args) => {
+                    send(level, args);
+                    originals[level](...args);
+                };
+            }
+            window.androidPortLog = (level, ...args) => send(level || "log", args);
+        })();
+    </script>
+    <script type="module">
+        const setBootStatus = (text, error = false) => {
+            const status = document.getElementById("static-boot-status");
+            if (!status) return;
+            status.textContent = text;
+            status.classList.toggle("error", error);
+            if (text.toLowerCase().includes("initializing") && !document.body.classList.contains("playing")) {
+                setTimeout(activateGameMode, 200);
+            }
+        };
+        window.addEventListener("error", (event) => setBootStatus("Startup error: " + event.message, true));
+        window.addEventListener("unhandledrejection", (event) => {
+            const reason = event.reason && (event.reason.message || String(event.reason));
+            setBootStatus("Startup error: " + (reason || "unknown"), true);
+        });
+        async function startBundleWhenIsolated() {
+            await cleanupLegacyServiceWorkers();
+            if (typeof SharedArrayBuffer === "undefined") {
+                await new Promise((resolve) => setTimeout(resolve, 1200));
+            }
+
+            if (typeof SharedArrayBuffer === "undefined") {
+                throw new Error(
+                    "SharedArrayBuffer unavailable. " +
+                    "url=" + location.href + " " +
+                    "secure=" + window.isSecureContext + " " +
+                    "isolated=" + window.crossOriginIsolated + " " +
+                    "server=" + (window.WEBVIEW_SERVER_URL || "unset")
+                );
+            }
+
+            await cleanupLegacyPackagedOpfs();
+            await import("./bundle.js");
+        }
+
+
+        async function cleanupLegacyServiceWorkers() {
+            if (!navigator.serviceWorker) return;
+            try {
+                const registrations = await navigator.serviceWorker.getRegistrations();
+                await Promise.all(registrations.map((registration) => registration.unregister()));
+                if (window.caches && caches.keys) {
+                    const keys = await caches.keys();
+                    await Promise.all(keys.map((key) => caches.delete(key)));
+                }
+                if (navigator.serviceWorker.controller && !sessionStorage.getItem("androidSwCleanupReloaded")) {
+                    sessionStorage.setItem("androidSwCleanupReloaded", "1");
+                    location.reload();
+                    await new Promise(() => {});
+                }
+            } catch (err) {
+                console.warn("Service worker cleanup skipped:", err);
+            }
+        }
+        async function cleanupLegacyPackagedOpfs() {
+            if (!navigator.storage || !navigator.storage.getDirectory) return;
+            try {
+                const root = await navigator.storage.getDirectory();
+                await removeIfExists(root, "Content", true);
+                await removeIfExists(root, "Celeste.dll", false);
+                await removeIfExists(root, "CustomCeleste.dll", false);
+                await removeIfExists(root, "Celeste.Mod.mm.dll", false);
+                await removeIfExists(root, "MMHOOK_Celeste.dll", false);
+                await removeIfExists(root, "everest.zip", false);
+                const celeste = await getDirectoryIfExists(root, "Celeste");
+                if (celeste) {
+                    await removeIfExists(celeste, "Everest", true);
+                }
+            } catch (err) {
+                console.warn("Packaged OPFS cleanup skipped:", err);
+            }
+        }
+
+        async function getDirectoryIfExists(parent, name) {
+            try {
+                return await parent.getDirectoryHandle(name);
+            } catch {
+                return null;
+            }
+        }
+
+        async function removeIfExists(parent, name, recursive) {
+            try {
+                await parent.removeEntry(name, { recursive });
+            } catch {
+            }
+        }
+
+        function activateGameMode() {
+            document.body.classList.add('playing');
+            window.scrollTo(0, 0);
+            if(document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(()=>{});
+        }
+
+        startBundleWhenIsolated().catch((err) => {
+            console.error(err);
+            setBootStatus("Startup error: " + (err.message || String(err)), true);
+        });
+    </script>
+</head>
+
+<body>
+<div id="static-boot">
+    <p id="static-boot-status"></p>
+    <div class="static-boot-bar"><div></div></div>
+</div>
+
+<style>
+    /* OPTIMIZED RENDERING */
+    html, body {
+        margin: 0; padding: 0; width: 100%; height: 100%;
+        background-color: #000;
+        overflow: hidden !important;
+        touch-action: none; user-select: none; -webkit-user-select: none;
+        position: fixed; transform: translateZ(0);
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    #static-boot {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background:
+            linear-gradient(rgba(0, 0, 0, 0.56), rgba(0, 0, 0, 0.64)),
+            url("assets/mountain.png") center / cover no-repeat #000;
+        color: #fff;
+        font: 600 18px/1.2 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        text-align: center;
+    }
+
+    #static-boot-status {
+        margin: 0;
+    }
+
+    #static-boot-status.error {
+        max-width: min(86vw, 720px);
+        color: #ff6b6b;
+        font-size: 15px;
+        line-height: 1.35;
+    }
+
+    .static-boot-bar {
+        width: min(72vw, 460px);
+        height: 12px;
+        overflow: hidden;
+        border: 2px solid rgba(255, 255, 255, 0.82);
+        background: rgba(255, 255, 255, 0.12);
+    }
+
+    .static-boot-bar > div {
+        width: 42%;
+        height: 100%;
+        background: #fff;
+        animation: staticBootProgress 1.15s ease-in-out infinite alternate;
+    }
+
+    @keyframes staticBootProgress {
+        from { transform: translateX(-95%); }
+        to { transform: translateX(235%); }
+    }
+    
+    canvas {
+        display: block; margin: 0 auto;
+        width: 100% !important; height: 100% !important;
+        object-fit: contain; z-index: 1;
+        image-rendering: pixelated; 
+        will-change: transform; transform: translateZ(0);
+    }
+
+    /* Hide Site UI */
+    .fps, .logs, .header, .title, .version, .icon, header, footer, .log-container {
+        display: none !important; opacity: 0 !important; pointer-events: none !important;
+        width: 0 !important; height: 0 !important; position: absolute !important;
+    }
+    body.playing .top-bar, body.playing footer, body.playing .header-controls, 
+    body.playing #header, body.playing .logs, body.playing h1, body.playing p { display: none !important; }
+    body.playing canvas { position: fixed !important; top: 0; left: 0; right: 0; bottom: 0; z-index: 5; background: #000; }
+</style>
+
+<script>
+    (function() {
+        // MOBILE CONTROLS AND KERNEL OPTIMIZATIONS
+        try { Object.defineProperty(window, 'devicePixelRatio', { get: function() { return 1; } }); } catch(e) {}
+        
+        try {
+            const originalGetContext = HTMLCanvasElement.prototype.getContext;
+            HTMLCanvasElement.prototype.getContext = function(type, attributes) {
+                if (type.includes('webgl')) {
+                    attributes = attributes || {};
+                    attributes.alpha = false;                 
+                    attributes.desynchronized = true;         
+                    attributes.powerPreference = "high-performance";
+                    attributes.preserveDrawingBuffer = false; 
+                    attributes.antialias = false;
+                }
+                return originalGetContext.call(this, type, attributes);
+            };
+        } catch(e) {}
+
+        try {
+            const originalAudioContext = window.AudioContext || window.webkitAudioContext;
+            if (originalAudioContext) {
+                window.AudioContext = window.webkitAudioContext = function(options) {
+                    options = options || {};
+                    return new originalAudioContext({ latencyHint: 'balanced', sampleRate: 44100 });
+                };
+            }
+        } catch(e) {}
+
+        document.addEventListener('click', (e) => {
+            const btn = e.target.closest('button') || e.target.closest('.action');
+            if (btn) {
+                const text = btn.innerText.toLowerCase().trim();
+                const html = btn.innerHTML.toLowerCase();
+                if (text.includes("start game") || (html.includes("play_arrow") && !text.includes("download"))) {
+                    setTimeout(() => {
+                        document.body.classList.add('playing');
+                        window.scrollTo(0, 0);
+                        if(document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(()=>{});
+                    }, 200);
+                }
+            }
+        }, true);
+    })();
+</script>
+
+</body>
+</html>

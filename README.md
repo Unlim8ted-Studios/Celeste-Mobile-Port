@@ -104,7 +104,7 @@ Celeste-Mobile-Port/
 │
 ├── AndroidWrapper/
 ├── IOSWrapper/
-├── Celeste/
+├── CelesteRuntime/
 └── CelesteMobileMods/
 ```
 
@@ -330,7 +330,7 @@ At a high level:
                      │
                      ▼
 ┌────────────────────────────────────────────┐
-│                 Celeste/                   │
+│                 CelesteRuntime/                   │
 │                                            │
 │       Threaded .NET WASM Runtime           │
 │                                            │
@@ -382,7 +382,7 @@ Celeste-Mobile-Port/
 │   ├── native iOS platform services
 │   └── iOS-specific bridge implementation
 │
-├── Celeste/
+├── CelesteRuntime/
 │   ├── index.html
 │   ├── bundle.js
 │   ├── styles.css
@@ -480,7 +480,7 @@ The goal is not to maintain a separate iOS Celeste implementation.
 Instead, iOS should host the same:
 
 ```text
-Celeste/
+CelesteRuntime/
 CelesteMobileMods/
 ```
 
@@ -504,7 +504,7 @@ iOS support is currently less complete than Android.
 
 ## Web Runtime
 
-`Celeste/` contains the browser-facing runtime shared by the platform wrappers.
+`CelesteRuntime/` contains the browser-facing runtime shared by the platform wrappers.
 
 ### Core Files
 
@@ -555,7 +555,7 @@ It:
 
 - Binds only to loopback
 - Selects a local port dynamically
-- Serves the `Celeste/` runtime
+- Serves the `CelesteRuntime/` runtime
 - Supports `GET`
 - Supports `HEAD`
 - Sanitizes request paths
@@ -935,7 +935,7 @@ After publishing, platform-specific post-processing can:
 - Route Emscripten main-thread assembly calls correctly
 - Adjust runtime limits
 - Split large `dotnet.native.*.wasm` binaries
-- Copy the processed runtime into `Celeste/_framework/`
+- Copy the processed runtime into `CelesteRuntime/_framework/`
 
 The exact scripts and paths may vary as the repository is reorganized.
 
@@ -1062,7 +1062,7 @@ Compile C#
 Package Everest mods
         │
         ▼
-Celeste/Mods
+CelesteRuntime/Mods
         │
         ▼
 Prepare threaded WASM runtime
@@ -1129,7 +1129,7 @@ This is primarily a development/test deployment path.
 The exact Android build commands depend on the contents of `AndroidWrapper/`, but the general process is:
 
 ```text
-Celeste/
+CelesteRuntime/
        │
        ▼
 AndroidWrapper packages runtime
@@ -1141,12 +1141,14 @@ Gradle build
 APK
 ```
 
-A typical Gradle build is:
+A typical Android wrapper build is:
 
 ```powershell
-cd .\AndroidWrapper
-.\gradlew.bat --no-daemon :app:assembleDebug
+.\BuildAndroidWrapper.bat
 ```
+
+`BuildAndroidWrapper.bat` stages the shared `CelesteRuntime/` folder into
+`AndroidWrapper/app/src/main/assets/CelesteRuntime/` before running Gradle.
 
 The generated APK can then be installed with:
 

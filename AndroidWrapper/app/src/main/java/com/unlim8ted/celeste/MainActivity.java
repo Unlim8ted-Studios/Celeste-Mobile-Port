@@ -28,7 +28,7 @@ public final class MainActivity extends Activity {
         root.setBackgroundColor(-16777216);
         setContentView(root);
         try {
-            this.assetServer = new LocalAssetServer(this, "www");
+            this.assetServer = new LocalAssetServer(this, "CelesteRuntime");
             this.assetServer.start();
             File geckoConfig = writeGeckoConfig();
             GeckoRuntimeSettings settings = new GeckoRuntimeSettings.Builder().aboutConfigEnabled(true).consoleOutput(false).debugLogging(false).configFilePath(geckoConfig.getAbsolutePath()).build();
