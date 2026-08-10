@@ -1,0 +1,1187 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text;
+using System.Text.Json;
+using Celeste;
+using Celeste.Mod;
+using Celeste.Mod.UI;
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Input;
+using Monocle;
+
+namespace Celeste.Mod.BetterMapEditor;
+
+public sealed class BetterMapEditorModule : EverestModule {
+    public static BetterMapEditorModule Instance { get; private set; }
+
+    private const string MetadataFileName = ".better-map-editor.json";
+    private static readonly JsonSerializerOptions JsonOptions = new() {
+        WriteIndented = true,
+        PropertyNameCaseInsensitive = true
+    };
+
+    private static Action<OuiMainMenu> pendingMainMenuAction;
+    private static EditorProject activeProject;
+    private static string activeProjectDirectory;
+
+    public BetterMapEditorModule() {
+        Instance = this;
+    }
+
+    public override void Load() {
+        Everest.Events.MainMenu.OnCreateButtons += OnCreateMainMenuButtons;
+        On.Celeste.OuiMainMenu.Update += OnMainMenuUpdate;
+    }
+
+    public override void Unload() {
+        Everest.Events.MainMenu.OnCreateButtons -= OnCreateMainMenuButtons;
+        On.Celeste.OuiMainMenu.Update -= OnMainMenuUpdate;
+        pendingMainMenuAction = null;
+        activeProject = null;
+        activeProjectDirectory = null;
+    }
+
+    private static void OnCreateMainMenuButtons(OuiMainMenu menu, List<MenuButton> buttons) {
+        Vector2 pos = Vector2.Zero;
+        int index = Math.Max(0, buttons.Count - 1);
+        buttons.Insert(index, new MainMenuSmallButton("MAP EDITOR", "menu/options", menu, pos, pos, () => ShowBrowser(menu)));
+    }
+
+    private static void OnMainMenuUpdate(On.Celeste.OuiMainMenu.orig_Update orig, OuiMainMenu menu) {
+        orig(menu);
+
+        if (pendingMainMenuAction == null || menu == null || !menu.Visible || !menu.Focused)
+            return;
+
+        Action<OuiMainMenu> action = pendingMainMenuAction;
+        pendingMainMenuAction = null;
+        Engine.Scene.OnEndOfFrame += () => action(menu);
+    }
+
+    private static void ShowBrowser(OuiMainMenu owner) {
+        CloseOurOverlays();
+
+        TextMenu menu = CreateMenu("MAP EDITOR + BROWSER", owner);
+        menu.Add(new TextMenu.Button("CREATE NEW MAP MOD").Pressed(() => {
+            CloseMenu(menu);
+            PromptString(owner, "NewMapMod", 40, value => {
+                string displayName = CleanDisplayName(value, "New Map Mod");
+                string slug = MakeUniqueModSlug(Slugify(displayName));
+                string dir = Path.Combine(GetModsDirectory(), slug);
+
+                EditorProject project = new() {
+                    Name = displayName,
+                    ModName = slug,
+                    Chapters = new List<EditorChapter>()
+                };
+
+                Directory.CreateDirectory(dir);
+                SaveProject(project, dir);
+                activeProject = project;
+                activeProjectDirectory = dir;
+                pendingMainMenuAction = main => ShowProject(main, project, dir);
+            });
+        }));
+
+        List<ProjectEntry> projects = ScanProjects();
+        if (projects.Count > 0)
+            menu.Add(new TextMenu.SubHeader("EDITABLE PROJECTS", false));
+
+        foreach (ProjectEntry entry in projects) {
+            ProjectEntry captured = entry;
+            menu.Add(new TextMenu.Button(captured.Project.Name).Pressed(() => {
+                activeProject = captured.Project;
+                activeProjectDirectory = captured.Directory;
+                CloseMenu(menu);
+                ShowProject(owner, captured.Project, captured.Directory);
+            }));
+        }
+
+        List<InstalledMapMod> installed = ScanInstalledMapMods(projects.Select(p => p.Directory));
+        if (installed.Count > 0) {
+            menu.Add(new TextMenu.SubHeader("OTHER INSTALLED MAP MODS", false));
+            foreach (InstalledMapMod mod in installed) {
+                InstalledMapMod captured = mod;
+                menu.Add(new TextMenu.Button($"{captured.Name}  ({captured.MapCount} MAPS)").Pressed(() => {
+                    CloseMenu(menu);
+                    ShowInfo(owner,
+                        captured.Name,
+                        "This map mod was not created by BetterMapEditor, so it is listed read-only. " +
+                        "BetterMapEditor never overwrites an unknown map binary.",
+                        main => ShowBrowser(main));
+                }));
+            }
+        }
+
+        if (projects.Count == 0 && installed.Count == 0)
+            menu.Add(new TextMenu.SubHeader("NO MAP MODS FOUND", false));
+
+        menu.Add(new TextMenu.Button("CLOSE").Pressed(() => CloseMenu(menu)));
+    }
+
+    private static void ShowProject(OuiMainMenu owner, EditorProject project, string projectDirectory) {
+        activeProject = project;
+        activeProjectDirectory = projectDirectory;
+        SaveProject(project, projectDirectory);
+
+        TextMenu menu = CreateMenu(project.Name.ToUpperInvariant(), owner);
+        menu.Add(new TextMenu.SubHeader($"MOD ID: {project.ModName}", false));
+        menu.Add(new TextMenu.Button("ADD CHAPTER").Pressed(() => {
+            CloseMenu(menu);
+            PromptString(owner, $"Chapter {project.Chapters.Count + 1}", 40, value => {
+                string name = CleanDisplayName(value, $"Chapter {project.Chapters.Count + 1}");
+                string baseSlug = Slugify(name);
+                string slug = MakeUniqueChapterSlug(project, baseSlug);
+                EditorChapter chapter = new() {
+                    Name = name,
+                    Slug = slug,
+                    Rooms = new List<EditorRoom> { EditorRoom.CreateDefault("room_1") }
+                };
+                project.Chapters.Add(chapter);
+                SaveProject(project, projectDirectory);
+                pendingMainMenuAction = main => ShowChapter(main, project, projectDirectory, chapter);
+            });
+        }));
+
+        if (project.Chapters.Count > 0)
+            menu.Add(new TextMenu.SubHeader("CHAPTERS", false));
+
+        for (int i = 0; i < project.Chapters.Count; i++) {
+            EditorChapter chapter = project.Chapters[i];
+            int number = i + 1;
+            menu.Add(new TextMenu.Button($"{number:00}  {chapter.Name}  ({chapter.Rooms.Count} ROOMS)").Pressed(() => {
+                CloseMenu(menu);
+                ShowChapter(owner, project, projectDirectory, chapter);
+            }));
+        }
+
+        menu.Add(new TextMenu.Button("BUILD / SAVE ALL MAPS").Pressed(() => {
+            BuildAllMaps(project, projectDirectory);
+            SaveProject(project, projectDirectory);
+            CloseMenu(menu);
+            ShowInfo(owner,
+                "MAPS WRITTEN",
+                $"Saved {project.Chapters.Count} chapter map(s) into Mods/{project.ModName}/Maps/{project.ModName}. " +
+                "Restart Celeste before playing a newly-created map mod so Everest can discover it.",
+                main => ShowProject(main, project, projectDirectory));
+        }));
+
+        menu.Add(new TextMenu.Button("RENAME MAP MOD").Pressed(() => {
+            CloseMenu(menu);
+            PromptString(owner, project.Name, 40, value => {
+                project.Name = CleanDisplayName(value, project.Name);
+                SaveProject(project, projectDirectory);
+                pendingMainMenuAction = main => ShowProject(main, project, projectDirectory);
+            });
+        }));
+
+        menu.Add(new TextMenu.Button("BACK TO BROWSER").Pressed(() => {
+            CloseMenu(menu);
+            ShowBrowser(owner);
+        }));
+    }
+
+    private static void ShowChapter(OuiMainMenu owner, EditorProject project, string projectDirectory, EditorChapter chapter) {
+        TextMenu menu = CreateMenu(chapter.Name.ToUpperInvariant(), owner);
+        int chapterIndex = project.Chapters.IndexOf(chapter);
+        menu.Add(new TextMenu.SubHeader($"CHAPTER {chapterIndex + 1:00}  /  SID {project.ModName}/{chapter.Slug}", false));
+
+        menu.Add(new TextMenu.Button("ADD ROOM").Pressed(() => {
+            string name = MakeUniqueRoomName(chapter, $"room_{chapter.Rooms.Count + 1}");
+            EditorRoom room = EditorRoom.CreateDefault(name);
+            chapter.Rooms.Add(room);
+            SaveProject(project, projectDirectory);
+            CloseMenu(menu);
+            ShowRoomEditor(owner, project, projectDirectory, chapter, room);
+        }));
+
+        menu.Add(new TextMenu.Button("RENAME CHAPTER").Pressed(() => {
+            CloseMenu(menu);
+            PromptString(owner, chapter.Name, 40, value => {
+                chapter.Name = CleanDisplayName(value, chapter.Name);
+                SaveProject(project, projectDirectory);
+                pendingMainMenuAction = main => ShowChapter(main, project, projectDirectory, chapter);
+            });
+        }));
+
+        menu.Add(new TextMenu.Button("BUILD THIS CHAPTER").Pressed(() => {
+            BuildChapter(project, chapter, projectDirectory);
+            SaveProject(project, projectDirectory);
+            CloseMenu(menu);
+            ShowInfo(owner,
+                "CHAPTER WRITTEN",
+                $"Saved {project.ModName}/{chapter.Slug}.bin with {chapter.Rooms.Count} room(s).",
+                main => ShowChapter(main, project, projectDirectory, chapter));
+        }));
+
+        if (chapter.Rooms.Count > 0)
+            menu.Add(new TextMenu.SubHeader("ROOMS", false));
+
+        for (int i = 0; i < chapter.Rooms.Count; i++) {
+            EditorRoom room = chapter.Rooms[i];
+            menu.Add(new TextMenu.Button($"{i + 1:00}  {room.Name}  {room.WidthTiles}x{room.HeightTiles}").Pressed(() => {
+                CloseMenu(menu);
+                ShowRoomEditor(owner, project, projectDirectory, chapter, room);
+            }));
+        }
+
+        menu.Add(new TextMenu.Button("BACK").Pressed(() => {
+            CloseMenu(menu);
+            ShowProject(owner, project, projectDirectory);
+        }));
+    }
+
+    private static void ShowRoomEditor(OuiMainMenu owner, EditorProject project, string projectDirectory, EditorChapter chapter, EditorRoom room) {
+        CloseOurOverlays();
+        RoomEditorOverlay overlay = new(owner, project, projectDirectory, chapter, room);
+        Engine.Scene.Add(overlay);
+    }
+
+    private static void ShowInfo(OuiMainMenu owner, string title, string text, Action<OuiMainMenu> onClose) {
+        TextMenu menu = CreateMenu(title, owner);
+        menu.Add(new WrappedTextItem(text, 900f));
+        menu.Add(new TextMenu.Button("OK").Pressed(() => {
+            CloseMenu(menu);
+            onClose?.Invoke(owner);
+        }));
+    }
+
+    private static TextMenu CreateMenu(string title, OuiMainMenu owner) {
+        CloseOurOverlays();
+
+        TextMenu menu = new() {
+            Position = new Vector2(Engine.Width, Engine.Height) / 2f,
+            Tag = Tags.HUD,
+            ItemSpacing = 12f
+        };
+        menu.Add(new TextMenu.Header(title));
+
+        ModalBackdrop backdrop = new(menu);
+        OptionalPointerController pointer = new(menu);
+        menu.OnCancel = () => CloseMenu(menu);
+        menu.OnClose += () => {
+            backdrop.RemoveSelf();
+            pointer.RemoveSelf();
+        };
+
+        Engine.Scene.Add(backdrop);
+        Engine.Scene.Add(menu);
+        Engine.Scene.Add(pointer);
+        return menu;
+    }
+
+    private static void CloseMenu(TextMenu menu) {
+        if (menu != null && menu.Scene != null)
+            menu.Close();
+    }
+
+    private static void CloseOurOverlays() {
+        Scene scene = Engine.Scene;
+        if (scene == null)
+            return;
+
+        foreach (RoomEditorOverlay overlay in scene.Entities.OfType<RoomEditorOverlay>().ToArray())
+            overlay.RemoveSelf();
+        foreach (OptionalPointerController pointer in scene.Entities.OfType<OptionalPointerController>().ToArray())
+            pointer.RemoveSelf();
+        foreach (ModalBackdrop backdrop in scene.Entities.OfType<ModalBackdrop>().ToArray())
+            backdrop.RemoveSelf();
+    }
+
+    private static void PromptString(OuiMainMenu owner, string initialValue, int maxLength, Action<string> accepted) {
+        if (owner?.Overworld == null)
+            return;
+
+        Audio.Play("event:/ui/main/savefile_rename_start");
+        owner.Overworld.Goto<OuiModOptionString>().Init<OuiMainMenu>(
+            initialValue ?? string.Empty,
+            value => accepted?.Invoke(value ?? string.Empty),
+            maxLength
+        );
+    }
+
+    private static string GetModsDirectory() {
+        string gamePath = null;
+        try {
+            PropertyInfo property = typeof(Everest).GetProperty("PathGame", BindingFlags.Public | BindingFlags.Static);
+            gamePath = property?.GetValue(null) as string;
+        } catch {
+        }
+
+        if (string.IsNullOrWhiteSpace(gamePath))
+            gamePath = AppContext.BaseDirectory;
+
+        string mods = Path.Combine(gamePath, "Mods");
+        Directory.CreateDirectory(mods);
+        return mods;
+    }
+
+    private static List<ProjectEntry> ScanProjects() {
+        List<ProjectEntry> result = new();
+        string mods = GetModsDirectory();
+
+        foreach (string dir in Directory.EnumerateDirectories(mods)) {
+            string metadata = Path.Combine(dir, MetadataFileName);
+            if (!File.Exists(metadata))
+                continue;
+
+            try {
+                EditorProject project = JsonSerializer.Deserialize<EditorProject>(File.ReadAllText(metadata), JsonOptions);
+                if (project != null) {
+                    project.Normalize();
+                    result.Add(new ProjectEntry(project, dir));
+                }
+            } catch (Exception e) {
+                Logger.Log(LogLevel.Warn, "BetterMapEditor", $"Could not load {metadata}: {e.Message}");
+            }
+        }
+
+        return result.OrderBy(p => p.Project.Name, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private static List<InstalledMapMod> ScanInstalledMapMods(IEnumerable<string> editableDirectories) {
+        HashSet<string> editable = new(editableDirectories.Select(Path.GetFullPath), StringComparer.OrdinalIgnoreCase);
+        List<InstalledMapMod> result = new();
+
+        foreach (string dir in Directory.EnumerateDirectories(GetModsDirectory())) {
+            string full = Path.GetFullPath(dir);
+            if (editable.Contains(full))
+                continue;
+
+            string maps = Path.Combine(dir, "Maps");
+            if (!Directory.Exists(maps))
+                continue;
+
+            int count;
+            try {
+                count = Directory.EnumerateFiles(maps, "*.bin", SearchOption.AllDirectories).Count();
+            } catch {
+                continue;
+            }
+
+            if (count > 0)
+                result.Add(new InstalledMapMod(Path.GetFileName(dir), count));
+        }
+
+        return result.OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private static void SaveProject(EditorProject project, string projectDirectory) {
+        project.Normalize();
+        Directory.CreateDirectory(projectDirectory);
+        File.WriteAllText(Path.Combine(projectDirectory, MetadataFileName), JsonSerializer.Serialize(project, JsonOptions));
+        WriteGeneratedEverestYaml(project, projectDirectory);
+    }
+
+    private static void WriteGeneratedEverestYaml(EditorProject project, string projectDirectory) {
+        string yaml =
+            $"- Name: {YamlScalar(project.ModName)}\n" +
+            "  Version: 1.0.0\n" +
+            "  Dependencies:\n" +
+            "    - Name: Everest\n" +
+            "      Version: 1.6418.0\n";
+        File.WriteAllText(Path.Combine(projectDirectory, "everest.yaml"), yaml, new UTF8Encoding(false));
+    }
+
+    private static string YamlScalar(string value) {
+        value ??= string.Empty;
+        return "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+    }
+
+    private static void BuildAllMaps(EditorProject project, string projectDirectory) {
+        foreach (EditorChapter chapter in project.Chapters)
+            BuildChapter(project, chapter, projectDirectory);
+    }
+
+    private static void BuildChapter(EditorProject project, EditorChapter chapter, string projectDirectory) {
+        project.Normalize();
+        string mapDir = Path.Combine(projectDirectory, "Maps", project.ModName);
+        Directory.CreateDirectory(mapDir);
+        string output = Path.Combine(mapDir, chapter.Slug + ".bin");
+        string package = project.ModName + "/" + chapter.Slug;
+
+        MapElement map = BuildMapElement(chapter);
+        CelesteMapBinary.Write(output, package, map);
+    }
+
+    private static MapElement BuildMapElement(EditorChapter chapter) {
+        MapElement levels = new("levels");
+        int roomX = 0;
+        int entityId = 0;
+
+        foreach (EditorRoom room in chapter.Rooms) {
+            room.Normalize();
+            MapElement level = new("level")
+                .Attr("name", room.Name)
+                .Attr("x", roomX)
+                .Attr("y", 0)
+                .Attr("width", room.WidthTiles * 8)
+                .Attr("height", room.HeightTiles * 8)
+                .Attr("c", 0)
+                .Attr("musicLayer1", true)
+                .Attr("musicLayer2", true)
+                .Attr("musicLayer3", true)
+                .Attr("musicLayer4", true)
+                .Attr("musicProgress", "")
+                .Attr("ambienceProgress", "")
+                .Attr("delayAltMusicFade", false)
+                .Attr("dark", false)
+                .Attr("space", false)
+                .Attr("underwater", false)
+                .Attr("whisper", false)
+                .Attr("music", "music_oldsite_awake")
+                .Attr("altMusic", "")
+                .Attr("disableDownTransition", false)
+                .Attr("windPattern", "None")
+                .Attr("cameraOffsetX", 0f)
+                .Attr("cameraOffsetY", 0f);
+
+            string solids = room.GetSolidsText();
+            string emptyTiles = room.GetEmptyTilesText();
+            string objTiles = room.GetObjectTilesText();
+
+            level.Child(new MapElement("solids").Attr("innerText", solids));
+            level.Child(new MapElement("bg").Attr("innerText", emptyTiles));
+            level.Child(new MapElement("objtiles").Attr("innerText", objTiles));
+            level.Child(new MapElement("fgtiles").Attr("tileset", "Scenery"));
+            level.Child(new MapElement("bgtiles").Attr("tileset", "Scenery"));
+
+            MapElement entities = new("entities");
+            if (room.HasSpawn) {
+                entities.Child(new MapElement("player")
+                    .Attr("id", entityId++)
+                    .Attr("x", room.SpawnTileX * 8 + 4)
+                    .Attr("y", room.SpawnTileY * 8 + 8));
+            }
+            level.Child(entities);
+            level.Child(new MapElement("triggers"));
+            level.Child(new MapElement("fgdecals").Attr("tileset", "Scenery"));
+            level.Child(new MapElement("bgdecals").Attr("tileset", "Scenery"));
+
+            levels.Child(level);
+            roomX += room.WidthTiles * 8;
+        }
+
+        MapElement style = new("Style")
+            .Child(new MapElement("Foregrounds"))
+            .Child(new MapElement("Backgrounds"));
+
+        return new MapElement("Map")
+            .Child(levels)
+            .Child(style)
+            .Child(new MapElement("Filler"));
+    }
+
+    private static string CleanDisplayName(string value, string fallback) {
+        string cleaned = (value ?? string.Empty).Trim();
+        return string.IsNullOrWhiteSpace(cleaned) ? fallback : cleaned;
+    }
+
+    private static string Slugify(string value) {
+        StringBuilder b = new();
+        bool underscore = false;
+        foreach (char c in value ?? string.Empty) {
+            if (char.IsLetterOrDigit(c)) {
+                b.Append(c);
+                underscore = false;
+            } else if (!underscore && b.Length > 0) {
+                b.Append('_');
+                underscore = true;
+            }
+        }
+
+        string result = b.ToString().Trim('_');
+        if (string.IsNullOrWhiteSpace(result))
+            result = "MapMod";
+        if (char.IsDigit(result[0]))
+            result = "Map_" + result;
+        return result;
+    }
+
+    private static string MakeUniqueModSlug(string baseSlug) {
+        string mods = GetModsDirectory();
+        string slug = baseSlug;
+        int n = 2;
+        while (Directory.Exists(Path.Combine(mods, slug)))
+            slug = baseSlug + "_" + n++;
+        return slug;
+    }
+
+    private static string MakeUniqueChapterSlug(EditorProject project, string baseSlug) {
+        string slug = baseSlug;
+        int n = 2;
+        while (project.Chapters.Any(c => string.Equals(c.Slug, slug, StringComparison.OrdinalIgnoreCase)))
+            slug = baseSlug + "_" + n++;
+        return slug;
+    }
+
+    private static string MakeUniqueRoomName(EditorChapter chapter, string baseName) {
+        string name = baseName;
+        int n = 2;
+        while (chapter.Rooms.Any(r => string.Equals(r.Name, name, StringComparison.OrdinalIgnoreCase)))
+            name = baseName + "_" + n++;
+        return name;
+    }
+
+    private sealed record ProjectEntry(EditorProject Project, string Directory);
+    private sealed record InstalledMapMod(string Name, int MapCount);
+
+    public sealed class EditorProject {
+        public string Name { get; set; } = "New Map Mod";
+        public string ModName { get; set; } = "NewMapMod";
+        public List<EditorChapter> Chapters { get; set; } = new();
+
+        public void Normalize() {
+            Name = CleanDisplayName(Name, "New Map Mod");
+            ModName = Slugify(ModName);
+            Chapters ??= new List<EditorChapter>();
+            foreach (EditorChapter chapter in Chapters)
+                chapter.Normalize();
+        }
+    }
+
+    public sealed class EditorChapter {
+        public string Name { get; set; } = "Chapter 1";
+        public string Slug { get; set; } = "Chapter_1";
+        public List<EditorRoom> Rooms { get; set; } = new();
+
+        public void Normalize() {
+            Name = CleanDisplayName(Name, "Chapter");
+            Slug = Slugify(Slug);
+            Rooms ??= new List<EditorRoom>();
+            foreach (EditorRoom room in Rooms)
+                room.Normalize();
+        }
+    }
+
+    public sealed class EditorRoom {
+        public string Name { get; set; } = "room_1";
+        public int WidthTiles { get; set; } = 40;
+        public int HeightTiles { get; set; } = 23;
+        public List<string> SolidRows { get; set; } = new();
+        public bool HasSpawn { get; set; } = true;
+        public int SpawnTileX { get; set; } = 3;
+        public int SpawnTileY { get; set; } = 20;
+
+        public static EditorRoom CreateDefault(string name) {
+            EditorRoom room = new() { Name = name };
+            room.Normalize();
+            char[] floor = room.SolidRows[room.HeightTiles - 1].ToCharArray();
+            for (int x = 0; x < floor.Length; x++)
+                floor[x] = '1';
+            room.SolidRows[room.HeightTiles - 1] = new string(floor);
+            room.SpawnTileX = 3;
+            room.SpawnTileY = Math.Max(1, room.HeightTiles - 3);
+            return room;
+        }
+
+        public void Normalize() {
+            Name = Slugify(Name).ToLowerInvariant();
+            WidthTiles = Math.Clamp(WidthTiles, 10, 160);
+            HeightTiles = Math.Clamp(HeightTiles, 8, 90);
+            SolidRows ??= new List<string>();
+
+            while (SolidRows.Count < HeightTiles)
+                SolidRows.Add(new string('0', WidthTiles));
+            if (SolidRows.Count > HeightTiles)
+                SolidRows.RemoveRange(HeightTiles, SolidRows.Count - HeightTiles);
+
+            for (int y = 0; y < SolidRows.Count; y++) {
+                string row = SolidRows[y] ?? string.Empty;
+                if (row.Length < WidthTiles)
+                    row += new string('0', WidthTiles - row.Length);
+                if (row.Length > WidthTiles)
+                    row = row.Substring(0, WidthTiles);
+                char[] chars = row.ToCharArray();
+                for (int x = 0; x < chars.Length; x++)
+                    chars[x] = chars[x] == '0' ? '0' : '1';
+                SolidRows[y] = new string(chars);
+            }
+
+            SpawnTileX = Math.Clamp(SpawnTileX, 0, WidthTiles - 1);
+            SpawnTileY = Math.Clamp(SpawnTileY, 0, HeightTiles - 1);
+        }
+
+        public bool IsSolid(int x, int y) {
+            if (x < 0 || y < 0 || x >= WidthTiles || y >= HeightTiles)
+                return false;
+            return SolidRows[y][x] != '0';
+        }
+
+        public void SetSolid(int x, int y, bool solid) {
+            if (x < 0 || y < 0 || x >= WidthTiles || y >= HeightTiles)
+                return;
+            char[] row = SolidRows[y].ToCharArray();
+            row[x] = solid ? '1' : '0';
+            SolidRows[y] = new string(row);
+        }
+
+        public string GetSolidsText() => string.Join("\n", SolidRows);
+        public string GetEmptyTilesText() => string.Join("\n", Enumerable.Repeat(new string('0', WidthTiles), HeightTiles));
+        public string GetObjectTilesText() => string.Join("\n", Enumerable.Repeat(string.Join(",", Enumerable.Repeat("-1", WidthTiles)), HeightTiles));
+    }
+
+    private enum EditorTool {
+        Solid,
+        Erase,
+        Spawn
+    }
+
+    private sealed class RoomEditorOverlay : Entity {
+        private readonly OuiMainMenu owner;
+        private readonly EditorProject project;
+        private readonly string projectDirectory;
+        private readonly EditorChapter chapter;
+        private readonly EditorRoom room;
+        private EditorTool tool = EditorTool.Solid;
+        private bool desktopPainting;
+        private bool desktopPaintValue;
+
+        private const float CanvasX = 80f;
+        private const float CanvasY = 150f;
+        private const float CanvasWidth = 1760f;
+        private const float CanvasHeight = 760f;
+
+        private readonly ToolbarButton[] toolbar;
+
+        public RoomEditorOverlay(OuiMainMenu owner, EditorProject project, string projectDirectory, EditorChapter chapter, EditorRoom room)
+            : base(Vector2.Zero) {
+            this.owner = owner;
+            this.project = project;
+            this.projectDirectory = projectDirectory;
+            this.chapter = chapter;
+            this.room = room;
+            room.Normalize();
+            Tag = Tags.HUD | Tags.PauseUpdate;
+            Depth = -2000000;
+
+            toolbar = new[] {
+                new ToolbarButton("SOLID", 80, 960, 220, 70, () => tool = EditorTool.Solid),
+                new ToolbarButton("ERASE", 320, 960, 220, 70, () => tool = EditorTool.Erase),
+                new ToolbarButton("SPAWN", 560, 960, 220, 70, () => tool = EditorTool.Spawn),
+                new ToolbarButton("+ WIDTH", 820, 960, 220, 70, () => ResizeRoom(1, 0)),
+                new ToolbarButton("+ HEIGHT", 1060, 960, 220, 70, () => ResizeRoom(0, 1)),
+                new ToolbarButton("SAVE", 1360, 960, 200, 70, Save),
+                new ToolbarButton("BACK", 1590, 960, 250, 70, Back)
+            };
+        }
+
+        public override void Update() {
+            base.Update();
+
+            if (Input.MenuCancel.Pressed || MInput.Keyboard.Pressed(Keys.Escape)) {
+                Back();
+                return;
+            }
+
+            if (MInput.Keyboard.Pressed(Keys.D1)) tool = EditorTool.Solid;
+            if (MInput.Keyboard.Pressed(Keys.D2)) tool = EditorTool.Erase;
+            if (MInput.Keyboard.Pressed(Keys.D3)) tool = EditorTool.Spawn;
+            if (MInput.Keyboard.Pressed(Keys.S) && (MInput.Keyboard.Check(Keys.LeftControl) || MInput.Keyboard.Check(Keys.RightControl))) Save();
+
+            Vector2 pointer = new(MInput.Mouse.X, MInput.Mouse.Y);
+            bool desktopPress = MInput.Mouse.PressedLeftButton;
+            bool desktopHeld = MInput.Mouse.CheckLeftButton;
+            bool desktopRelease = MInput.Mouse.ReleasedLeftButton;
+
+            if (desktopPress) {
+                if (TryToolbar(pointer))
+                    return;
+
+                if (TryGetCell(pointer, out int cx, out int cy)) {
+                    if (tool == EditorTool.Spawn) {
+                        room.HasSpawn = true;
+                        room.SpawnTileX = cx;
+                        room.SpawnTileY = cy;
+                    } else {
+                        desktopPainting = true;
+                        desktopPaintValue = tool == EditorTool.Solid;
+                        room.SetSolid(cx, cy, desktopPaintValue);
+                    }
+                }
+            } else if (desktopHeld && desktopPainting && TryGetCell(pointer, out int cx, out int cy)) {
+                room.SetSolid(cx, cy, desktopPaintValue);
+            }
+
+            if (desktopRelease)
+                desktopPainting = false;
+
+            if (OptionalMobileBridge.TouchAvailable && OptionalMobileBridge.ConsumeTouchTap()) {
+                Vector2 touch = OptionalMobileBridge.TouchPosition;
+                if (TryToolbar(touch))
+                    return;
+                if (TryGetCell(touch, out int tx, out int ty)) {
+                    if (tool == EditorTool.Spawn) {
+                        room.HasSpawn = true;
+                        room.SpawnTileX = tx;
+                        room.SpawnTileY = ty;
+                    } else {
+                        room.SetSolid(tx, ty, tool == EditorTool.Solid);
+                    }
+                }
+            }
+        }
+
+        public override void Render() {
+            Draw.Rect(0, 0, 1920, 1080, Color.Black * 0.94f);
+            ActiveFont.DrawOutline($"{project.Name}  /  {chapter.Name}  /  {room.Name}", new Vector2(960, 50), new Vector2(0.5f, 0.5f), Vector2.One * 0.8f, Color.White, 2f, Color.Black);
+            ActiveFont.DrawOutline("1 SOLID   2 ERASE   3 SPAWN   CTRL+S SAVE", new Vector2(960, 105), new Vector2(0.5f, 0.5f), Vector2.One * 0.45f, Color.LightGray, 2f, Color.Black);
+
+            float cell = GetCellSize();
+            float width = room.WidthTiles * cell;
+            float height = room.HeightTiles * cell;
+            float ox = CanvasX + (CanvasWidth - width) * 0.5f;
+            float oy = CanvasY + (CanvasHeight - height) * 0.5f;
+
+            Draw.Rect(ox - 4, oy - 4, width + 8, height + 8, Color.White);
+            Draw.Rect(ox, oy, width, height, new Color(34, 38, 50));
+
+            for (int y = 0; y < room.HeightTiles; y++) {
+                for (int x = 0; x < room.WidthTiles; x++) {
+                    float px = ox + x * cell;
+                    float py = oy + y * cell;
+                    if (room.IsSolid(x, y))
+                        Draw.Rect(px + 1, py + 1, Math.Max(1, cell - 2), Math.Max(1, cell - 2), new Color(120, 104, 92));
+                    if (cell >= 8f) {
+                        Draw.Line(new Vector2(px, py), new Vector2(px + cell, py), Color.White * 0.08f);
+                        Draw.Line(new Vector2(px, py), new Vector2(px, py + cell), Color.White * 0.08f);
+                    }
+                }
+            }
+
+            if (room.HasSpawn) {
+                float sx = ox + room.SpawnTileX * cell + cell * 0.5f;
+                float sy = oy + room.SpawnTileY * cell + cell * 0.5f;
+                Draw.Circle(new Vector2(sx, sy), Math.Max(4f, cell * 0.3f), Color.Cyan, 16);
+                Draw.Line(new Vector2(sx - cell * 0.25f, sy), new Vector2(sx + cell * 0.25f, sy), Color.Black, 2f);
+                Draw.Line(new Vector2(sx, sy - cell * 0.25f), new Vector2(sx, sy + cell * 0.25f), Color.Black, 2f);
+            }
+
+            foreach (ToolbarButton button in toolbar)
+                button.Render(tool);
+        }
+
+        private float GetCellSize() => Math.Min(CanvasWidth / room.WidthTiles, CanvasHeight / room.HeightTiles);
+
+        private bool TryGetCell(Vector2 pointer, out int x, out int y) {
+            float cell = GetCellSize();
+            float width = room.WidthTiles * cell;
+            float height = room.HeightTiles * cell;
+            float ox = CanvasX + (CanvasWidth - width) * 0.5f;
+            float oy = CanvasY + (CanvasHeight - height) * 0.5f;
+
+            if (pointer.X < ox || pointer.Y < oy || pointer.X >= ox + width || pointer.Y >= oy + height) {
+                x = y = -1;
+                return false;
+            }
+
+            x = Math.Clamp((int)((pointer.X - ox) / cell), 0, room.WidthTiles - 1);
+            y = Math.Clamp((int)((pointer.Y - oy) / cell), 0, room.HeightTiles - 1);
+            return true;
+        }
+
+        private bool TryToolbar(Vector2 pointer) {
+            foreach (ToolbarButton button in toolbar) {
+                if (button.Contains(pointer)) {
+                    Audio.Play("event:/ui/main/button_select");
+                    button.Action();
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private void ResizeRoom(int dw, int dh) {
+            room.WidthTiles = Math.Clamp(room.WidthTiles + dw, 10, 160);
+            room.HeightTiles = Math.Clamp(room.HeightTiles + dh, 8, 90);
+            room.Normalize();
+        }
+
+        private void Save() {
+            SaveProject(project, projectDirectory);
+            BuildChapter(project, chapter, projectDirectory);
+            Audio.Play("event:/ui/main/button_select");
+        }
+
+        private void Back() {
+            SaveProject(project, projectDirectory);
+            RemoveSelf();
+            Engine.Scene.OnEndOfFrame += () => ShowChapter(owner, project, projectDirectory, chapter);
+        }
+
+        private sealed class ToolbarButton {
+            public readonly string Label;
+            public readonly Rectangle Rect;
+            public readonly Action Action;
+
+            public ToolbarButton(string label, int x, int y, int w, int h, Action action) {
+                Label = label;
+                Rect = new Rectangle(x, y, w, h);
+                Action = action;
+            }
+
+            public bool Contains(Vector2 point) => Rect.Contains((int)point.X, (int)point.Y);
+
+            public void Render(EditorTool currentTool) {
+                bool selected = (Label == "SOLID" && currentTool == EditorTool.Solid) ||
+                                (Label == "ERASE" && currentTool == EditorTool.Erase) ||
+                                (Label == "SPAWN" && currentTool == EditorTool.Spawn);
+                Color fill = selected ? Color.White * 0.28f : Color.White * 0.12f;
+                Draw.Rect(Rect.X, Rect.Y, Rect.Width, Rect.Height, fill);
+                Draw.HollowRect(Rect.X, Rect.Y, Rect.Width, Rect.Height, Color.White * 0.8f);
+                ActiveFont.DrawOutline(Label, new Vector2(Rect.Center.X, Rect.Center.Y), new Vector2(0.5f, 0.5f), Vector2.One * 0.45f, Color.White, 2f, Color.Black);
+            }
+        }
+    }
+
+    private sealed class ModalBackdrop : Entity {
+        private readonly TextMenu menu;
+
+        public ModalBackdrop(TextMenu menu) {
+            this.menu = menu;
+            Tag = Tags.HUD | Tags.PauseUpdate;
+            Depth = menu.Depth + 1;
+        }
+
+        public override void Render() {
+            Draw.Rect(0, 0, 1920, 1080, Color.Black * 0.78f);
+            if (menu?.Scene == null)
+                return;
+            menu.RecalculateSize();
+            float w = Math.Min(1500f, menu.Width + 100f);
+            float h = Math.Min(980f, menu.Height + 80f);
+            Vector2 p = menu.Position;
+            Draw.Rect(p.X - w * 0.5f, p.Y - h * 0.5f, w, h, Color.Black * 0.94f);
+            Draw.HollowRect(p.X - w * 0.5f, p.Y - h * 0.5f, w, h, Color.White * 0.9f);
+        }
+    }
+
+    private sealed class OptionalPointerController : Entity {
+        private readonly TextMenu menu;
+        private float scrollAccumulator;
+
+        public OptionalPointerController(TextMenu menu) {
+            this.menu = menu;
+            Tag = Tags.HUD | Tags.PauseUpdate;
+            Depth = -2000001;
+        }
+
+        public override void Update() {
+            base.Update();
+            if (menu == null || menu.Scene == null || !menu.Visible || !menu.Focused || menu.Items == null || menu.Items.Count == 0)
+                return;
+
+            if (!OptionalMobileBridge.TouchAvailable)
+                return;
+
+            Vector2 pointer = OptionalMobileBridge.TouchPosition;
+            bool pressed = OptionalMobileBridge.ConsumeTouchTap();
+            float scroll = OptionalMobileBridge.ConsumeTouchScroll();
+
+            menu.RecalculateSize();
+            Vector2 origin = menu.Position - menu.Justify * new Vector2(menu.Width, menu.Height);
+
+            if (Math.Abs(scroll) > 34f)
+                menu.MoveSelection(scroll > 0 ? -1 : 1, true);
+
+            float itemY = origin.Y;
+            for (int i = 0; i < menu.Items.Count; i++) {
+                TextMenu.Item item = menu.Items[i];
+                if (item == null || !item.Visible)
+                    continue;
+                float h = item.Height();
+                float centerY = itemY + h * 0.5f;
+                float hitH = Math.Max(h, 80f);
+                bool inside = item.Hoverable && pointer.X >= origin.X - 100f && pointer.X <= origin.X + menu.Width + 100f && pointer.Y >= centerY - hitH * 0.5f && pointer.Y <= centerY + hitH * 0.5f;
+                if (inside) {
+                    if (menu.Current != item) {
+                        menu.Current?.OnLeave?.Invoke();
+                        menu.Selection = i;
+                        item.OnEnter?.Invoke();
+                        item.SelectWiggler?.Start();
+                    }
+                    if (pressed) {
+                        item.ConfirmPressed();
+                        item.OnPressed?.Invoke();
+                    }
+                    return;
+                }
+                itemY += h + menu.ItemSpacing;
+            }
+        }
+    }
+
+    private sealed class WrappedTextItem : TextMenu.Item {
+        private readonly FancyText.Text text;
+
+        public WrappedTextItem(string value, float width) {
+            Selectable = false;
+            text = FancyText.Parse(value ?? string.Empty, (int)width, 100);
+        }
+
+        public override float Height() => text.Lines * ActiveFont.LineHeight * 0.55f + 30f;
+        public override float LeftWidth() => 900f;
+        public override void Render(Vector2 position, bool highlighted) {
+            text.Draw(position + new Vector2(Container.Width * 0.5f, 0), new Vector2(0.5f, 0.5f), Vector2.One * 0.55f, Container.Alpha);
+        }
+    }
+
+    private static class OptionalMobileBridge {
+        private static bool resolved;
+        private static PropertyInfo touchAvailable;
+        private static MethodInfo consumeTap;
+        private static MethodInfo touchX;
+        private static MethodInfo touchY;
+        private static MethodInfo consumeScroll;
+
+        public static bool TouchAvailable {
+            get {
+                Resolve();
+                try { return touchAvailable != null && (bool)touchAvailable.GetValue(null); }
+                catch { return false; }
+            }
+        }
+
+        public static Vector2 TouchPosition {
+            get {
+                Resolve();
+                try {
+                    float x = Convert.ToSingle(touchX?.Invoke(null, null) ?? -1f);
+                    float y = Convert.ToSingle(touchY?.Invoke(null, null) ?? -1f);
+                    return new Vector2(x, y);
+                } catch {
+                    return new Vector2(-1, -1);
+                }
+            }
+        }
+
+        public static bool ConsumeTouchTap() {
+            Resolve();
+            try { return consumeTap != null && (bool)consumeTap.Invoke(null, null); }
+            catch { return false; }
+        }
+
+        public static float ConsumeTouchScroll() {
+            Resolve();
+            try { return Convert.ToSingle(consumeScroll?.Invoke(null, null) ?? 0f); }
+            catch { return 0f; }
+        }
+
+        private static void Resolve() {
+            if (resolved)
+                return;
+            resolved = true;
+
+            Type api = AppDomain.CurrentDomain.GetAssemblies()
+                .Select(a => a.GetType("Celeste.Mod.MobileBridge.MobileBridgeApi", false))
+                .FirstOrDefault(t => t != null);
+            if (api == null)
+                return;
+
+            touchAvailable = api.GetProperty("TouchAvailable", BindingFlags.Public | BindingFlags.Static);
+            consumeTap = api.GetMethod("ConsumeTouchTap", BindingFlags.Public | BindingFlags.Static);
+            touchX = api.GetMethod("TouchX", BindingFlags.Public | BindingFlags.Static);
+            touchY = api.GetMethod("TouchY", BindingFlags.Public | BindingFlags.Static);
+            consumeScroll = api.GetMethod("ConsumeTouchScroll", BindingFlags.Public | BindingFlags.Static);
+        }
+    }
+
+    private sealed class MapElement {
+        public string Name { get; }
+        public Dictionary<string, object> Attributes { get; } = new(StringComparer.Ordinal);
+        public List<MapElement> Children { get; } = new();
+
+        public MapElement(string name) {
+            Name = name;
+        }
+
+        public MapElement Attr(string key, object value) {
+            Attributes[key] = value;
+            return this;
+        }
+
+        public MapElement Child(MapElement child) {
+            Children.Add(child);
+            return this;
+        }
+    }
+
+    private static class CelesteMapBinary {
+        private const string Header = "CELESTE MAP";
+
+        public static void Write(string path, string package, MapElement root) {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+
+            List<string> lookup = new();
+            Dictionary<string, ushort> indices = new(StringComparer.Ordinal);
+            CollectLookup(root, lookup, indices);
+
+            if (lookup.Count > short.MaxValue)
+                throw new InvalidDataException("Map lookup table is too large.");
+
+            using FileStream stream = new(path, FileMode.Create, FileAccess.Write, FileShare.Read);
+            using BinaryWriter writer = new(stream, Encoding.UTF8, leaveOpen: false);
+            WriteString(writer, Header);
+            WriteString(writer, package);
+            writer.Write((short)lookup.Count);
+            foreach (string value in lookup)
+                WriteString(writer, value);
+            WriteElement(writer, root, indices);
+        }
+
+        private static void CollectLookup(MapElement element, List<string> lookup, Dictionary<string, ushort> indices) {
+            AddLookup(element.Name, lookup, indices);
+            foreach ((string key, object value) in element.Attributes) {
+                AddLookup(key, lookup, indices);
+                if (value is string str && key != "innerText")
+                    AddLookup(str, lookup, indices);
+            }
+            foreach (MapElement child in element.Children)
+                CollectLookup(child, lookup, indices);
+        }
+
+        private static void AddLookup(string value, List<string> lookup, Dictionary<string, ushort> indices) {
+            value ??= string.Empty;
+            if (indices.ContainsKey(value))
+                return;
+            if (lookup.Count >= ushort.MaxValue)
+                throw new InvalidDataException("Map lookup table overflow.");
+            indices[value] = (ushort)lookup.Count;
+            lookup.Add(value);
+        }
+
+        private static void WriteElement(BinaryWriter writer, MapElement element, Dictionary<string, ushort> lookup) {
+            writer.Write(lookup[element.Name]);
+            if (element.Attributes.Count > byte.MaxValue)
+                throw new InvalidDataException($"Element {element.Name} has too many attributes.");
+            writer.Write((byte)element.Attributes.Count);
+
+            foreach ((string key, object value) in element.Attributes) {
+                writer.Write(lookup[key]);
+                WriteValue(writer, key, value, lookup);
+            }
+
+            if (element.Children.Count > ushort.MaxValue)
+                throw new InvalidDataException($"Element {element.Name} has too many children.");
+            writer.Write((ushort)element.Children.Count);
+            foreach (MapElement child in element.Children)
+                WriteElement(writer, child, lookup);
+        }
+
+        private static void WriteValue(BinaryWriter writer, string key, object value, Dictionary<string, ushort> lookup) {
+            switch (value) {
+                case bool b:
+                    writer.Write((byte)0);
+                    writer.Write(b);
+                    return;
+                case byte b8:
+                    writer.Write((byte)1);
+                    writer.Write(b8);
+                    return;
+                case sbyte sb:
+                    WriteInteger(writer, sb);
+                    return;
+                case short s16:
+                    WriteInteger(writer, s16);
+                    return;
+                case ushort u16:
+                    WriteInteger(writer, u16);
+                    return;
+                case int i32:
+                    WriteInteger(writer, i32);
+                    return;
+                case long i64 when i64 >= int.MinValue && i64 <= int.MaxValue:
+                    WriteInteger(writer, (int)i64);
+                    return;
+                case float f:
+                    writer.Write((byte)4);
+                    writer.Write(f);
+                    return;
+                case double d:
+                    writer.Write((byte)4);
+                    writer.Write((float)d);
+                    return;
+                case string str:
+                    if (key != "innerText" && lookup.TryGetValue(str, out ushort index)) {
+                        writer.Write((byte)5);
+                        writer.Write(index);
+                        return;
+                    }
+                    WriteStringValue(writer, str ?? string.Empty);
+                    return;
+                default:
+                    throw new InvalidDataException($"Unsupported map attribute type {value?.GetType().FullName ?? "null"} for {key}.");
+            }
+        }
+
+        private static void WriteInteger(BinaryWriter writer, int value) {
+            if (value >= byte.MinValue && value <= byte.MaxValue) {
+                writer.Write((byte)1);
+                writer.Write((byte)value);
+            } else if (value >= short.MinValue && value <= short.MaxValue) {
+                writer.Write((byte)2);
+                writer.Write((short)value);
+            } else {
+                writer.Write((byte)3);
+                writer.Write(value);
+            }
+        }
+
+        private static void WriteStringValue(BinaryWriter writer, string value) {
+            byte[] utf8 = Encoding.UTF8.GetBytes(value);
+            byte[] rle = TryRle(value);
+            if (rle != null && rle.Length < utf8.Length && rle.Length <= short.MaxValue) {
+                writer.Write((byte)7);
+                writer.Write((short)rle.Length);
+                writer.Write(rle);
+            } else {
+                writer.Write((byte)6);
+                WriteString(writer, value);
+            }
+        }
+
+        private static byte[] TryRle(string value) {
+            if (string.IsNullOrEmpty(value))
+                return null;
+            foreach (char c in value)
+                if (c > byte.MaxValue)
+                    return null;
+
+            List<byte> result = new();
+            char current = value[0];
+            int count = 1;
+            for (int i = 1; i < value.Length; i++) {
+                char c = value[i];
+                if (c != current || count == 255) {
+                    result.Add((byte)count);
+                    result.Add((byte)current);
+                    current = c;
+                    count = 1;
+                } else {
+                    count++;
+                }
+            }
+            result.Add((byte)count);
+            result.Add((byte)current);
+            return result.ToArray();
+        }
+
+        private static void WriteString(BinaryWriter writer, string value) {
+            byte[] bytes = Encoding.UTF8.GetBytes(value ?? string.Empty);
+            WriteVarInt(writer, bytes.Length);
+            writer.Write(bytes);
+        }
+
+        private static void WriteVarInt(BinaryWriter writer, int value) {
+            uint remaining = (uint)value;
+            while (remaining > 127) {
+                writer.Write((byte)((remaining & 0x7F) | 0x80));
+                remaining >>= 7;
+            }
+            writer.Write((byte)remaining);
+        }
+    }
+}
