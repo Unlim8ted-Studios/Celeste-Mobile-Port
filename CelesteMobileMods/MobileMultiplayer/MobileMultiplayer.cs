@@ -1105,7 +1105,7 @@ public sealed class MobileMultiplayerModule : EverestModule {
         // Browser/WASM networking cannot perform a raw local subnet TCP scan.
         // The native wrapper can supply discovered server endpoints through
         // MobileBridge.GetCelesteNetServers().
-        if (OperatingSystem.IsBrowser()) {
+        if (IsBrowserRuntime()) {
             discoveryRefreshPending = true;
             return;
         }
@@ -1223,6 +1223,19 @@ public sealed class MobileMultiplayerModule : EverestModule {
                 discoveryRefreshPending = true;
             }
         });
+    }
+
+    private static bool IsBrowserRuntime() {
+        try {
+            return string.Equals(
+                    Environment.GetEnvironmentVariable("EVEREST_PATH"),
+                    "/libsdl",
+                    StringComparison.Ordinal) ||
+                !string.IsNullOrEmpty(
+                    Environment.GetEnvironmentVariable("CEL_WASM_LOG_LEVEL"));
+        } catch {
+            return false;
+        }
     }
 
     private static IPAddress GetLocalIPv4() {

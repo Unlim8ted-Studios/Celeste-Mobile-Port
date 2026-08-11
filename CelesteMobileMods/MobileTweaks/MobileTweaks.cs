@@ -65,7 +65,12 @@ public sealed class MobileTweaksModule : EverestModule {
 
     private static bool IsBrowserRuntime() {
         try {
-            return OperatingSystem.IsBrowser();
+            return string.Equals(
+                    Environment.GetEnvironmentVariable("EVEREST_PATH"),
+                    "/libsdl",
+                    StringComparison.Ordinal) ||
+                !string.IsNullOrEmpty(
+                    Environment.GetEnvironmentVariable("CEL_WASM_LOG_LEVEL"));
         } catch {
             return false;
         }
@@ -464,10 +469,25 @@ public sealed class MobileTweaksModule : EverestModule {
                 bounds.Top,
                 maxY));
 
+        float smoothing =
+            1f - (float)Math.Pow(
+                0.001f,
+                Engine.DeltaTime);
+
+        Vector2 position =
+            Vector2.Lerp(
+                level.Camera.Position,
+                target,
+                smoothing);
+
+        if (Vector2.DistanceSquared(position, target) < 0.25f) {
+            position = target;
+        }
+
         // Write after vanilla Level.Update so this is the position actually
-        // rendered. The old InControl/Zoom/ScreenPadding gates prevented the
-        // feature from engaging in many ordinary rooms.
-        level.Camera.Position = target;
+        // rendered. Both axes converge toward the player's center, with the
+        // same room-boundary clamp as vanilla camera bounds.
+        level.Camera.Position = position;
     }
 
     private static class MobileBridgeProxy {

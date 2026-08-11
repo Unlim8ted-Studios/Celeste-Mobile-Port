@@ -4692,6 +4692,9 @@ function bootStatus(message) {
       node.style.display = "none";
     }
   });
+  if (message === "starting game" || message === "complete") {
+    window.celesteForceGameVisible?.();
+  }
 }
 let initPromise = null;
 async function init() {
@@ -4802,6 +4805,7 @@ async function initOnce() {
     celesteAndroidConsumeTouchTap: () => !!globalThis.celesteAndroidConsumeTouchTap?.(),
     celesteAndroidTouchX: () => Number(globalThis.celesteAndroidTouchX?.() ?? -1),
     celesteAndroidTouchY: () => Number(globalThis.celesteAndroidTouchY?.() ?? -1),
+    celesteAndroidTouchDown: () => !!globalThis.celesteAndroidTouchDown?.(),
     celesteAndroidConsumeTouchScroll: () => Number(globalThis.celesteAndroidConsumeTouchScroll?.() ?? 0),
     celesteAndroidStartCelesteNetHost: (port) => !!globalThis.celesteAndroidStartCelesteNetHost?.(port),
     celesteAndroidStopCelesteNetHost: () => globalThis.celesteAndroidStopCelesteNetHost?.(),
@@ -4864,7 +4868,7 @@ async function initOnce() {
   }
 
   initted = true;
-  bootStatus("ready to start game");
+  bootStatus("Starting game");
 }
 var ts = performance.now();
 var fps;
@@ -4988,11 +4992,15 @@ async function start(canvas) {
     }
 
     bootStatus("starting game");
+    window.celesteForceGameVisible?.();
     for (let i = 0; i < 5; i++) {
       if (!await loaderExports.CelesteLoader.RunOneFrame()) {
         throw new Error("Celeste exited during startup");
       }
     }
+    window.celesteForceGameVisible?.();
+    window.celesteLogCanvasState?.("after startup frames");
+    setTimeout(() => window.celesteLogCanvasState?.("after displayed timeout"), 1500);
     if (hideIntroSplash) hideIntroSplash();
     localStorage["celeste_first_run_complete"] = "true";
     startPersistenceLoop();
@@ -6144,7 +6152,8 @@ function IntroSplash() {
     await prepareMaintenance();
     hideIntroSplash = () => {
       if (!this.root || !this.root.parentNode) return;
-      this.root.addEventListener("animationend", this.root.remove);
+      this.root.style.display = "none";
+      this.root.remove();
       this.root.style.animation = "fadeout 0.5s ease";
     };
   };

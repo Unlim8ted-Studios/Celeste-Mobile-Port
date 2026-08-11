@@ -567,6 +567,9 @@ public static partial class MobileBridgeApi {
     [JSImport("celesteAndroidTouchY", "android-port.js")]
     private static partial double JsTouchY();
 
+    [JSImport("celesteAndroidTouchDown", "android-port.js")]
+    private static partial bool JsTouchDown();
+
     [JSImport("celesteAndroidConsumeTouchScroll", "android-port.js")]
     private static partial double JsConsumeTouchScroll();
 
@@ -624,6 +627,9 @@ public static partial class MobileBridgeApi {
     private static double JsTouchY() =>
         -1d;
 
+    private static bool JsTouchDown() =>
+        false;
+
     private static double JsConsumeTouchScroll() =>
         0d;
 
@@ -644,7 +650,12 @@ public static partial class MobileBridgeApi {
     public static bool IsBrowser {
         get {
             try {
-                return OperatingSystem.IsBrowser();
+                return string.Equals(
+                        Environment.GetEnvironmentVariable("EVEREST_PATH"),
+                        "/libsdl",
+                        StringComparison.Ordinal) ||
+                    !string.IsNullOrEmpty(
+                        Environment.GetEnvironmentVariable("CEL_WASM_LOG_LEVEL"));
             } catch {
                 return false;
             }
@@ -762,6 +773,18 @@ public static partial class MobileBridgeApi {
             return (float)JsTouchY();
         } catch {
             return -1f;
+        }
+    }
+
+    public static bool TouchDown() {
+        if (!TouchAvailable) {
+            return false;
+        }
+
+        try {
+            return JsTouchDown();
+        } catch {
+            return false;
         }
     }
 

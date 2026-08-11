@@ -49,10 +49,16 @@ $RepoOrModsRoot = $PSScriptRoot
 $NestedModsRoot = Join-Path $RepoOrModsRoot "CelesteMobileMods"
 
 if (Test-Path -LiteralPath $NestedModsRoot -PathType Container) {
+    $RepoRoot = $RepoOrModsRoot
     $ModsRoot = $NestedModsRoot
 } else {
+    $RepoRoot = Split-Path -Parent $RepoOrModsRoot
     $ModsRoot = $RepoOrModsRoot
 }
+
+$RuntimeModsDest = Join-Path $RepoRoot "CelesteRuntime\Mods"
+$CecilPath = Join-Path $RepoRoot "tools\WasmMmPatch\Mono.Cecil.dll"
+$FrameworkRoot = Join-Path $RepoRoot "CelesteRuntime\_framework"
 
 $ContentDirectories = @(
     "Ahorn",
@@ -78,6 +84,104 @@ function Invoke-DotNetBuild {
 
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet build failed for: $ProjectPath"
+    }
+}
+
+function Ensure-CecilLoaded {
+    if (!([System.Management.Automation.PSTypeName]"Mono.Cecil.ModuleDefinition").Type) {
+        if (!(Test-Path -LiteralPath $CecilPath -PathType Leaf)) {
+            throw "Mono.Cecil was not found for assembly normalization: $CecilPath"
+        }
+
+        [System.Reflection.Assembly]::LoadFrom($CecilPath) | Out-Null
+    }
+}
+
+function Get-FrameworkAssemblyIdentityMap {
+    Ensure-CecilLoaded
+
+    $map = @{}
+
+    if (!(Test-Path -LiteralPath $FrameworkRoot -PathType Container)) {
+        throw "Framework directory was not found: $FrameworkRoot"
+    }
+
+    foreach ($dll in Get-ChildItem -LiteralPath $FrameworkRoot -Filter "*.dll" -File) {
+        $module = $null
+
+        try {
+            $module = [Mono.Cecil.ModuleDefinition]::ReadModule($dll.FullName)
+            $name = $module.Assembly.Name
+            $map[$name.Name] = @{
+                Version = $name.Version
+                PublicKeyToken = $name.PublicKeyToken
+            }
+        }
+        finally {
+            if ($module -ne $null) {
+                $module.Dispose()
+            }
+        }
+    }
+
+    return $map
+}
+
+function Normalize-ModAssemblyReferences {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DllPath,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable]$FrameworkAssemblies
+    )
+
+    Ensure-CecilLoaded
+
+    $readerParameters = [Mono.Cecil.ReaderParameters]::new()
+    $readerParameters.InMemory = $true
+
+    $module = [Mono.Cecil.ModuleDefinition]::ReadModule(
+        $DllPath,
+        $readerParameters)
+
+    $changed = $false
+
+    try {
+        foreach ($reference in $module.AssemblyReferences) {
+            if (!$FrameworkAssemblies.ContainsKey($reference.Name)) {
+                continue
+            }
+
+            $identity = $FrameworkAssemblies[$reference.Name]
+
+            if ($reference.Version -ne $identity.Version) {
+                $reference.Version = $identity.Version
+                $changed = $true
+            }
+
+            if ($identity.PublicKeyToken -and $identity.PublicKeyToken.Length -gt 0) {
+                $reference.PublicKeyToken = $identity.PublicKeyToken
+            }
+        }
+
+        if (!$changed) {
+            return
+        }
+
+        $tmp = "$DllPath.tmp"
+
+        if (Test-Path -LiteralPath $tmp -PathType Leaf) {
+            Remove-Item -LiteralPath $tmp -Force
+        }
+
+        $module.Write($tmp)
+        Move-Item -LiteralPath $tmp -Destination $DllPath -Force
+
+        Write-Host "Normalized framework references in $DllPath" -ForegroundColor DarkGreen
+    }
+    finally {
+        $module.Dispose()
     }
 }
 
@@ -272,6 +376,10 @@ if (!(Test-Path -LiteralPath $ModsDest -PathType Container)) {
     New-Item -ItemType Directory -Path $ModsDest -Force | Out-Null
 }
 
+if (!(Test-Path -LiteralPath $RuntimeModsDest -PathType Container)) {
+    New-Item -ItemType Directory -Path $RuntimeModsDest -Force | Out-Null
+}
+
 if (!(Test-Path -LiteralPath $ModsRoot -PathType Container)) {
     throw "CelesteMobileMods directory was not found: $ModsRoot"
 }
@@ -312,6 +420,8 @@ foreach ($mod in $DetectedMods) {
 
 Write-Host "CelesteNet is external and will NOT be built, removed, packaged, or deployed." -ForegroundColor DarkGray
 
+$FrameworkAssemblies = Get-FrameworkAssemblyIdentityMap
+
 # Close Celeste first.
 Write-Host "Checking for running Celeste process..." -ForegroundColor Yellow
 
@@ -340,9 +450,14 @@ Write-Host "Cleaning previously deployed workspace mod ZIPs..." -ForegroundColor
 
 foreach ($mod in $DetectedMods) {
     $deployedZip = Join-Path $ModsDest "$($mod.Name).zip"
+    $runtimeZip = Join-Path $RuntimeModsDest "$($mod.Name).zip"
 
     if (Test-Path -LiteralPath $deployedZip -PathType Leaf) {
         Remove-Item -LiteralPath $deployedZip -Force
+    }
+
+    if (Test-Path -LiteralPath $runtimeZip -PathType Leaf) {
+        Remove-Item -LiteralPath $runtimeZip -Force
     }
 }
 
@@ -373,6 +488,9 @@ foreach ($mod in $DetectedMods) {
         }
 
         $DllSource = Get-BuiltDll -ModPath $ModPath -DllName $DllName
+        Normalize-ModAssemblyReferences `
+            -DllPath $DllSource `
+            -FrameworkAssemblies $FrameworkAssemblies
 
         Write-Host "Using built DLL: $DllSource" -ForegroundColor DarkGray
         Write-Host "Manifest DLL: $DllName" -ForegroundColor DarkGray
@@ -428,6 +546,15 @@ foreach ($mod in $DetectedMods) {
             Copy-Item `
                 -LiteralPath $ZipPath `
                 -Destination $DeployPath `
+                -Force
+
+            $RuntimeDeployPath = Join-Path $RuntimeModsDest "$ModName.zip"
+
+            Write-Host "Bundling $ModName.zip to $RuntimeDeployPath..." -ForegroundColor Yellow
+
+            Copy-Item `
+                -LiteralPath $ZipPath `
+                -Destination $RuntimeDeployPath `
                 -Force
         }
         finally {

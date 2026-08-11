@@ -1,0 +1,848 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Profit-Informed Care — Documentary Film</title>
+
+    <meta name="description"
+        content="Profit-Informed Care is an advocacy documentary investigating corporate America's vested interest in mental health and the experiences of independent clinicians navigating the private insurance system.">
+
+    <meta name="theme-color" content="#f0eee8">
+
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Profit-Informed Care — Documentary Film">
+    <meta property="og:description"
+        content="Making sense of corporate America's vested interest in mental health. An advocacy documentary currently in pre-production.">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Profit-Informed Care — Documentary Film">
+    <meta name="twitter:description"
+        content="Making sense of corporate America's vested interest in mental health.">
+
+
+    <style>
+        /* ============================================================
+           PROFIT-INFORMED CARE
+           Documentary Landing Page
+
+           Visual language:
+           - investigative journalism
+           - financial documents
+           - clinical paperwork
+           - editorial documentary
+           - restrained red / paper / ink
+           ============================================================ */
+
+        :root {
+            --paper: #efede6;
+            --paper-light: #f8f6f0;
+
+            --ink: #11110f;
+            --ink-soft: #282824;
+            --muted: #66645e;
+
+            --red: #b72722;
+            --red-dark: #7e1815;
+
+            --max: 1260px;
+
+            --serif:
+                "Iowan Old Style",
+                "Palatino Linotype",
+                Palatino,
+                "Book Antiqua",
+                Georgia,
+                serif;
+
+            --sans:
+                Inter,
+                "Helvetica Neue",
+                Helvetica,
+                Arial,
+                sans-serif;
+
+            --mono:
+                "SFMono-Regular",
+                Consolas,
+                "Liberation Mono",
+                monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+            background: var(--ink);
+        }
+
+        body {
+            margin: 0;
+            min-width: 320px;
+            overflow-x: hidden;
+            color: var(--ink);
+            background: var(--paper);
+            font-family: var(--sans);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        ::selection {
+            color: white;
+            background: var(--red);
+        }
+
+        img,
+        svg {
+            display: block;
+            max-width: 100%;
+        }
+
+        a {
+            color: inherit;
+        }
+
+        button,
+        input {
+            font: inherit;
+        }
+
+        .page {
+            position: relative;
+            overflow: clip;
+        }
+
+        .container {
+            position: relative;
+            z-index: 2;
+            width: min(calc(100% - 44px), var(--max));
+            margin-inline: auto;
+        }
+
+        /* ============================================================
+           PAPER TEXTURE
+           ============================================================ */
+
+        .paper-noise {
+            position: fixed;
+            inset: 0;
+            z-index: 100;
+            opacity: 0.035;
+            pointer-events: none;
+            mix-blend-mode: multiply;
+
+            background-image:
+                url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='.8'/%3E%3C/svg%3E");
+        }
+
+        /* ============================================================
+           BUTTONS
+           ============================================================ */
+
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 11px;
+        }
+
+        .button {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+
+            min-height: 52px;
+            padding: 0 21px;
+
+            border: 1px solid var(--ink);
+            color: var(--ink);
+            background: transparent;
+
+            text-decoration: none;
+
+            font-family: var(--sans);
+            font-size: 0.77rem;
+            font-weight: 800;
+            letter-spacing: 0.055em;
+            text-transform: uppercase;
+
+            transition:
+                color 180ms ease,
+                background 180ms ease,
+                transform 180ms ease;
+        }
+
+        .button:hover {
+            color: white;
+            background: var(--ink);
+            transform: translateY(-2px);
+        }
+
+        .button.primary {
+            color: white;
+            border-color: var(--red);
+            background: var(--red);
+        }
+
+        .button.primary:hover {
+            border-color: var(--red-dark);
+            background: var(--red-dark);
+        }
+
+        .button svg {
+            width: 17px;
+            height: 17px;
+        }
+
+        /* ============================================================
+           HERO
+           ============================================================ */
+
+        .hero {
+            position: relative;
+            min-height: 940px;
+            display: flex;
+            align-items: center;
+            overflow: hidden;
+            padding: 105px 0 130px;
+            background: var(--paper-light);
+        }
+
+        .hero::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+
+            background:
+                linear-gradient(
+                    90deg,
+                    transparent 49.92%,
+                    rgba(17,17,15,.055) 50%,
+                    transparent 50.08%
+                ),
+                linear-gradient(
+                    rgba(17,17,15,.035) 1px,
+                    transparent 1px
+                );
+
+            background-size:
+                100% 100%,
+                100% 42px;
+
+            pointer-events: none;
+        }
+
+        .hero-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1.08fr) minmax(370px, 0.92fr);
+            gap: clamp(45px, 8vw, 110px);
+            align-items: center;
+        }
+
+        .hero-copy {
+            position: relative;
+            z-index: 5;
+        }
+
+        .film-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 9px;
+
+            margin-bottom: 28px;
+            padding: 7px 10px;
+
+            border: 1px solid var(--ink);
+
+            font-family: var(--mono);
+            font-size: 0.62rem;
+            font-weight: 800;
+            letter-spacing: 0.13em;
+            text-transform: uppercase;
+        }
+
+        .film-label .dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--red);
+        }
+
+        .hero h1 {
+            max-width: 850px;
+            margin: 0;
+
+            font-family: var(--serif);
+            font-size: clamp(4.6rem, 9.3vw, 9.6rem);
+            font-weight: 400;
+            line-height: 0.78;
+            letter-spacing: -0.075em;
+        }
+
+        .hero h1 span {
+            display: block;
+        }
+
+        .hero h1 .profit {
+            position: relative;
+            z-index: 2;
+        }
+
+        .hero h1 .informed {
+            position: relative;
+            z-index: 1;
+            margin-left: 0.18em;
+            color: var(--red);
+            font-style: italic;
+        }
+
+        .hero h1 .care {
+            margin-left: 0.57em;
+        }
+
+        .hero h1 .profit::after {
+            content: "$";
+            position: absolute;
+            z-index: -1;
+            top: -0.37em;
+            right: 0.06em;
+
+            color: rgba(183,39,34,.075);
+
+            font-family: var(--sans);
+            font-size: 2.2em;
+            font-weight: 900;
+            line-height: 1;
+        }
+
+        .hero-subtitle {
+            max-width: 630px;
+            margin: 40px 0 30px;
+
+            color: var(--ink-soft);
+
+            font-family: var(--serif);
+            font-size: clamp(1.2rem, 2vw, 1.5rem);
+            line-height: 1.55;
+        }
+
+        .hero-subtitle strong {
+            font-weight: 700;
+        }
+
+        .hero-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px 24px;
+            margin-top: 27px;
+
+            color: var(--muted);
+
+            font-family: var(--mono);
+            font-size: 0.64rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        /* ============================================================
+           HERO DOCUMENT COLLAGE
+           ============================================================ */
+
+        .hero-art {
+            position: relative;
+            min-height: 650px;
+            perspective: 1200px;
+        }
+
+        .document {
+            position: absolute;
+
+            width: 355px;
+            min-height: 480px;
+            padding: 34px;
+
+            border: 1px solid rgba(17,17,15,.18);
+            background: #faf8f1;
+
+            box-shadow:
+                0 45px 80px rgba(35,31,23,.18),
+                0 10px 25px rgba(35,31,23,.1);
+        }
+
+        .document.back {
+            top: 60px;
+            right: 110px;
+            transform: rotate(-8deg);
+
+            background: #dcd8cd;
+        }
+
+        .document.mid {
+            top: 110px;
+            right: 5px;
+            transform: rotate(7deg);
+
+            background: #ece9e0;
+        }
+
+        .document.front {
+            top: 50px;
+            right: 50px;
+            z-index: 3;
+            transform: rotate(-1.8deg);
+        }
+
+        .doc-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 20px;
+
+            padding-bottom: 16px;
+            margin-bottom: 25px;
+
+            border-bottom: 2px solid var(--ink);
+        }
+
+        .doc-header strong {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+
+        .doc-header span {
+            color: var(--muted);
+            font-family: var(--mono);
+            font-size: 0.57rem;
+            letter-spacing: 0.07em;
+        }
+
+        .doc-line {
+            height: 7px;
+            margin-bottom: 10px;
+            background: rgba(17,17,15,.13);
+        }
+
+        .doc-line.w90 { width: 90%; }
+        .doc-line.w80 { width: 80%; }
+        .doc-line.w72 { width: 72%; }
+        .doc-line.w60 { width: 60%; }
+        .doc-line.w45 { width: 45%; }
+
+        .doc-space {
+            height: 20px;
+        }
+
+        .redaction {
+            position: relative;
+            height: 13px;
+            margin: 12px 0;
+            background: var(--ink);
+        }
+
+        .redaction.short {
+            width: 65%;
+        }
+
+        .claim-table {
+            margin-top: 30px;
+            border: 1px solid var(--ink);
+        }
+
+        .claim-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+        }
+
+        .claim-row + .claim-row {
+            border-top: 1px solid var(--ink);
+        }
+
+        .claim-cell {
+            min-height: 35px;
+            padding: 9px;
+
+            font-family: var(--mono);
+            font-size: 0.52rem;
+            text-transform: uppercase;
+        }
+
+        .claim-cell + .claim-cell {
+            border-left: 1px solid var(--ink);
+        }
+
+        .claim-cell.money {
+            color: var(--red);
+            font-weight: 900;
+            text-align: right;
+        }
+
+        .stamp {
+            position: absolute;
+            right: -40px;
+            bottom: 100px;
+            z-index: 7;
+
+            display: grid;
+            place-items: center;
+
+            width: 175px;
+            height: 62px;
+
+            border: 5px solid var(--red);
+            color: var(--red);
+
+            font-family: var(--mono);
+            font-size: 1.05rem;
+            font-weight: 900;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+
+            transform: rotate(-12deg);
+
+            opacity: 0.88;
+        }
+
+        .paperclip {
+            position: absolute;
+            z-index: 9;
+            top: 19px;
+            right: 95px;
+
+            width: 38px;
+            height: 92px;
+
+            border: 4px solid #73716b;
+            border-bottom: 0;
+            border-radius: 25px 25px 0 0;
+
+            transform: rotate(7deg);
+        }
+
+        .paperclip::after {
+            content: "";
+            position: absolute;
+            top: 11px;
+            left: 8px;
+
+            width: 15px;
+            height: 72px;
+
+            border: 3px solid #73716b;
+            border-bottom: 0;
+            border-radius: 18px 18px 0 0;
+        }
+
+        .hero-note {
+            position: absolute;
+            z-index: 10;
+            left: -25px;
+            bottom: 50px;
+
+            width: 230px;
+            padding: 22px 23px;
+
+            color: var(--ink);
+            background: #e8d49c;
+
+            box-shadow: 0 20px 45px rgba(30,25,18,.15);
+
+            font-family: var(--serif);
+            font-size: 1.12rem;
+            font-style: italic;
+            line-height: 1.35;
+
+            transform: rotate(4deg);
+        }
+
+        .hero-note strong {
+            display: block;
+            margin-top: 14px;
+
+            font-family: var(--mono);
+            font-size: 0.55rem;
+            font-style: normal;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+
+        /* ============================================================
+           RESPONSIVE
+           ============================================================ */
+
+        @media (max-width: 1050px) {
+
+            .hero-layout {
+                grid-template-columns: 1fr 0.75fr;
+                gap: 35px;
+            }
+
+            .hero-art {
+                min-height: 600px;
+                transform: scale(.88);
+                transform-origin: center right;
+            }
+
+            .document {
+                width: 330px;
+            }
+
+        }
+
+        @media (max-width: 850px) {
+
+            .hero {
+                min-height: auto;
+                padding: 90px 0 100px;
+            }
+
+            .hero-layout {
+                grid-template-columns: 1fr;
+            }
+
+            .hero-art {
+                width: min(100%, 520px);
+                min-height: 620px;
+                margin: 20px auto 0;
+
+                transform: none;
+            }
+
+        }
+
+        @media (max-width: 600px) {
+
+            .container {
+                width: min(calc(100% - 28px), var(--max));
+            }
+
+            .hero h1 {
+                font-size: clamp(4.2rem, 22vw, 7rem);
+            }
+
+            .hero h1 .informed {
+                margin-left: 0;
+            }
+
+            .hero h1 .care {
+                margin-left: 0.3em;
+            }
+
+            .hero-art {
+                min-height: 530px;
+                margin-left: -10px;
+            }
+
+            .document {
+                width: 285px;
+                min-height: 420px;
+                padding: 25px;
+            }
+
+            .document.back {
+                right: 55px;
+            }
+
+            .document.mid {
+                right: -15px;
+            }
+
+            .document.front {
+                right: 10px;
+            }
+
+            .stamp {
+                right: -20px;
+                width: 145px;
+                height: 55px;
+                font-size: .85rem;
+            }
+
+            .hero-note {
+                left: 0;
+                bottom: 5px;
+                width: 190px;
+                font-size: .95rem;
+            }
+
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+
+            *,
+            *::before,
+            *::after {
+                scroll-behavior: auto !important;
+                animation-duration: .001ms !important;
+                transition-duration: .001ms !important;
+            }
+
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="paper-noise" aria-hidden="true"></div>
+
+    <!--
+        Shared Unlim8ted navigation.
+        Change these URLs if this project lives on a different domain.
+    -->
+    <site-navbar
+        cart-href="https://unlim8ted.com/sign-in/cart"
+        signin-href="https://unlim8ted.com/sign-in"
+        profile-href="https://unlim8ted.com/profile">
+    </site-navbar>
+
+    <main class="page">
+
+        <!-- ========================================================
+             HERO
+             ======================================================== -->
+
+        <section class="hero">
+
+            <div class="container hero-layout">
+
+                <div class="hero-copy">
+
+                    <div class="film-label">
+                        <span class="dot"></span>
+                        Documentary Film · In Pre-Production
+                    </div>
+
+                    <h1>
+                        <span class="profit">Profit</span>
+                        <span class="informed">Informed</span>
+                        <span class="care">Care.</span>
+                    </h1>
+
+                    <p class="hero-subtitle">
+                        <strong>Making Sense of Corporate America's Vested
+                        Interest in Mental Health.</strong>
+                    </p>
+
+                    
+
+                    <div class="hero-meta">
+                        <span>Advocacy Documentary</span>
+                        <span style="font-size:large">·</span>
+                        <span>Independent Production</span>
+                    </div>
+
+                </div>
+
+
+                <!-- INVESTIGATIVE PAPER COLLAGE -->
+
+                <div class="hero-art" aria-hidden="true">
+
+                    <div class="document back">
+
+                        <div class="doc-header">
+                            <strong>Corporate Structure</strong>
+                            <span>Exhibit 03</span>
+                        </div>
+
+                        <div class="doc-line w90"></div>
+                        <div class="doc-line w80"></div>
+                        <div class="doc-line w72"></div>
+
+                        <div class="doc-space"></div>
+
+                        <div class="redaction"></div>
+                        <div class="redaction short"></div>
+
+                        <div class="doc-space"></div>
+
+                        <div class="doc-line w90"></div>
+                        <div class="doc-line w60"></div>
+                        <div class="doc-line w80"></div>
+
+                    </div>
+
+                    <div class="document mid">
+
+                        <div class="doc-header">
+                            <strong>Provider Record</strong>
+                            <span>Confidential</span>
+                        </div>
+
+                        <div class="doc-line w80"></div>
+                        <div class="doc-line w90"></div>
+                        <div class="doc-line w60"></div>
+
+                        <div class="doc-space"></div>
+
+                        <div class="redaction"></div>
+
+                        <div class="doc-line w72"></div>
+                        <div class="doc-line w90"></div>
+                        <div class="doc-line w45"></div>
+
+                    </div>
+
+                    <div class="document front">
+
+                        <div class="doc-header">
+                            <strong>Insurance Claim</strong>
+                            <span>Review Copy</span>
+                        </div>
+
+                        <div class="doc-line w90"></div>
+                        <div class="doc-line w72"></div>
+                        <div class="doc-line w80"></div>
+
+                        <div class="claim-table">
+
+                            <div class="claim-row">
+                                <div class="claim-cell">Service</div>
+                                <div class="claim-cell money">Submitted</div>
+                            </div>
+
+                            <div class="claim-row">
+                                <div class="claim-cell">Allowed</div>
+                                <div class="claim-cell money">Adjusted</div>
+                            </div>
+
+                            <div class="claim-row">
+                                <div class="claim-cell">Provider</div>
+                                <div class="claim-cell money">Pending</div>
+                            </div>
+
+                            <div class="claim-row">
+                                <div class="claim-cell">Status</div>
+                                <div class="claim-cell money">Review</div>
+                            </div>
+
+                        </div>
+
+                        <div class="doc-space"></div>
+
+                        <div class="doc-line w80"></div>
+                        <div class="doc-line w60"></div>
+
+                    </div>
+
+                    <div class="paperclip"></div>
+
+
+                    <div class="hero-note">
+                        What happens when the system meant to pay for care
+                        has a financial interest in controlling it?
+
+                        <strong>The question behind the film</strong>
+                    </div>
+
+                </div>
+
+            </div>
+
+        </section>
+</html>

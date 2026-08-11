@@ -88,63 +88,57 @@ public sealed class BetterMapEditorModule : EverestModule {
 
     private static void ShowBrowser(OuiMainMenu owner) {
         CloseOurOverlays();
+        Engine.Scene.Add(new EditorPortalOverlay(owner));
+    }
 
-        TextMenu menu = CreateMenu("MAP EDITOR + BROWSER", owner);
-        menu.Add(new TextMenu.Button("CREATE NEW MAP MOD").Pressed(() => {
+    private static void ShowReadOnlyMap(
+        OuiMainMenu owner,
+        string name,
+        string text) {
+
+        ShowInfo(
+            owner,
+            name,
+            text,
+            main => ShowBrowser(main));
+    }
+
+    private static void ShowMapActions(OuiMainMenu owner, EditorProject project, string projectDirectory) {
+        TextMenu menu = CreateMenu(project.Name.ToUpperInvariant(), owner);
+        menu.Add(new TextMenu.SubHeader($"MOD ID: {project.ModName}", false));
+        menu.Add(new TextMenu.Button("EDIT").Pressed(() => {
+            QueueMenuAction(menu, () =>
+                ShowProject(
+                    owner,
+                    project,
+                    projectDirectory));
+        }));
+
+        menu.Add(new TextMenu.Button("BUILD / SAVE ALL MAPS").Pressed(() => {
+            BuildAllMaps(project, projectDirectory);
+            SaveProject(project, projectDirectory);
+            QueueMenuAction(menu, () =>
+                ShowInfo(
+                    owner,
+                    "MAPS WRITTEN",
+                    $"Saved {project.Chapters.Count} chapter map(s) into Mods/{project.ModName}/Maps/{project.ModName}. Restart Celeste before playing a newly-created map mod so Everest can discover it.",
+                    main => ShowMapActions(main, project, projectDirectory)));
+        }));
+
+        menu.Add(new TextMenu.Button("RENAME MAP MOD").Pressed(() => {
             CloseMenu(menu);
-            PromptString(owner, "NewMapMod", 40, value => {
-                string displayName = CleanDisplayName(value, "New Map Mod");
-                string slug = MakeUniqueModSlug(Slugify(displayName));
-                string dir = Path.Combine(GetModsDirectory(), slug);
-
-                EditorProject project = new() {
-                    Name = displayName,
-                    ModName = slug,
-                    Chapters = new List<EditorChapter>()
-                };
-
-                Directory.CreateDirectory(dir);
-                SaveProject(project, dir);
-                activeProject = project;
-                activeProjectDirectory = dir;
-                pendingMainMenuAction = main => ShowProject(main, project, dir);
+            PromptString(owner, project.Name, 40, value => {
+                project.Name = CleanDisplayName(value, project.Name);
+                SaveProject(project, projectDirectory);
+                pendingMainMenuAction = main =>
+                    ShowMapActions(main, project, projectDirectory);
             });
         }));
 
-        List<ProjectEntry> projects = ScanProjects();
-        if (projects.Count > 0)
-            menu.Add(new TextMenu.SubHeader("EDITABLE PROJECTS", false));
-
-        foreach (ProjectEntry entry in projects) {
-            ProjectEntry captured = entry;
-            menu.Add(new TextMenu.Button(captured.Project.Name).Pressed(() => {
-                activeProject = captured.Project;
-                activeProjectDirectory = captured.Directory;
-                CloseMenu(menu);
-                ShowProject(owner, captured.Project, captured.Directory);
-            }));
-        }
-
-        List<InstalledMapMod> installed = ScanInstalledMapMods(projects.Select(p => p.Directory));
-        if (installed.Count > 0) {
-            menu.Add(new TextMenu.SubHeader("OTHER INSTALLED MAP MODS", false));
-            foreach (InstalledMapMod mod in installed) {
-                InstalledMapMod captured = mod;
-                menu.Add(new TextMenu.Button($"{captured.Name}  ({captured.MapCount} MAPS)").Pressed(() => {
-                    CloseMenu(menu);
-                    ShowInfo(owner,
-                        captured.Name,
-                        "This map mod was not created by BetterMapEditor, so it is listed read-only. " +
-                        "BetterMapEditor never overwrites an unknown map binary.",
-                        main => ShowBrowser(main));
-                }));
-            }
-        }
-
-        if (projects.Count == 0 && installed.Count == 0)
-            menu.Add(new TextMenu.SubHeader("NO MAP MODS FOUND", false));
-
-        menu.Add(new TextMenu.Button("CLOSE").Pressed(() => CloseMenu(menu)));
+        menu.Add(new TextMenu.Button("BACK TO MAPS").Pressed(() => {
+            QueueMenuAction(menu, () =>
+                ShowBrowser(owner));
+        }));
     }
 
     private static void ShowProject(OuiMainMenu owner, EditorProject project, string projectDirectory) {
@@ -152,9 +146,10 @@ public sealed class BetterMapEditorModule : EverestModule {
         activeProjectDirectory = projectDirectory;
         SaveProject(project, projectDirectory);
 
-        TextMenu menu = CreateMenu(project.Name.ToUpperInvariant(), owner);
-        menu.Add(new TextMenu.SubHeader($"MOD ID: {project.ModName}", false));
-        menu.Add(new TextMenu.Button("ADD CHAPTER").Pressed(() => {
+        TextMenu menu = CreateMenu("SELECT CHAPTER", owner);
+        menu.Add(new TextMenu.SubHeader(project.Name.ToUpperInvariant(), false));
+
+        menu.Add(new TextMenu.Button("+ CREATE NEW CHAPTER").Pressed(() => {
             CloseMenu(menu);
             PromptString(owner, $"Chapter {project.Chapters.Count + 1}", 40, value => {
                 string name = CleanDisplayName(value, $"Chapter {project.Chapters.Count + 1}");
@@ -167,7 +162,12 @@ public sealed class BetterMapEditorModule : EverestModule {
                 };
                 project.Chapters.Add(chapter);
                 SaveProject(project, projectDirectory);
-                pendingMainMenuAction = main => ShowChapter(main, project, projectDirectory, chapter);
+                pendingMainMenuAction = main =>
+                    ShowChapter(
+                        main,
+                        project,
+                        projectDirectory,
+                        chapter);
             });
         }));
 
@@ -177,35 +177,24 @@ public sealed class BetterMapEditorModule : EverestModule {
         for (int i = 0; i < project.Chapters.Count; i++) {
             EditorChapter chapter = project.Chapters[i];
             int number = i + 1;
-            menu.Add(new TextMenu.Button($"{number:00}  {chapter.Name}  ({chapter.Rooms.Count} ROOMS)").Pressed(() => {
-                CloseMenu(menu);
-                ShowChapter(owner, project, projectDirectory, chapter);
-            }));
+            menu.Add(
+                new TextMenu.Button($"{number:00}  {chapter.Name}  +")
+                .Pressed(() => {
+                    QueueMenuAction(menu, () =>
+                        ShowChapter(
+                            owner,
+                            project,
+                            projectDirectory,
+                            chapter));
+                }));
         }
 
-        menu.Add(new TextMenu.Button("BUILD / SAVE ALL MAPS").Pressed(() => {
-            BuildAllMaps(project, projectDirectory);
-            SaveProject(project, projectDirectory);
-            CloseMenu(menu);
-            ShowInfo(owner,
-                "MAPS WRITTEN",
-                $"Saved {project.Chapters.Count} chapter map(s) into Mods/{project.ModName}/Maps/{project.ModName}. " +
-                "Restart Celeste before playing a newly-created map mod so Everest can discover it.",
-                main => ShowProject(main, project, projectDirectory));
-        }));
-
-        menu.Add(new TextMenu.Button("RENAME MAP MOD").Pressed(() => {
-            CloseMenu(menu);
-            PromptString(owner, project.Name, 40, value => {
-                project.Name = CleanDisplayName(value, project.Name);
-                SaveProject(project, projectDirectory);
-                pendingMainMenuAction = main => ShowProject(main, project, projectDirectory);
-            });
-        }));
-
         menu.Add(new TextMenu.Button("BACK TO BROWSER").Pressed(() => {
-            CloseMenu(menu);
-            ShowBrowser(owner);
+            QueueMenuAction(menu, () =>
+                ShowMapActions(
+                    owner,
+                    project,
+                    projectDirectory));
         }));
     }
 
@@ -214,13 +203,34 @@ public sealed class BetterMapEditorModule : EverestModule {
         int chapterIndex = project.Chapters.IndexOf(chapter);
         menu.Add(new TextMenu.SubHeader($"CHAPTER {chapterIndex + 1:00}  /  SID {project.ModName}/{chapter.Slug}", false));
 
-        menu.Add(new TextMenu.Button("ADD ROOM").Pressed(() => {
-            string name = MakeUniqueRoomName(chapter, $"room_{chapter.Rooms.Count + 1}");
-            EditorRoom room = EditorRoom.CreateDefault(name);
-            chapter.Rooms.Add(room);
+        menu.Add(new TextMenu.Button("EDIT").Pressed(() => {
+            chapter.Normalize();
+            if (chapter.Rooms.Count == 0) {
+                chapter.Rooms.Add(EditorRoom.CreateDefault("room_1"));
+                SaveProject(project, projectDirectory);
+            }
+
+            EditorRoom selected =
+                chapter.Rooms[0];
+
+            QueueMenuAction(menu, () =>
+                ShowRoomEditor(
+                    owner,
+                    project,
+                    projectDirectory,
+                    chapter,
+                    selected));
+        }));
+
+        menu.Add(new TextMenu.Button("TEST").Pressed(() => {
+            BuildChapter(project, chapter, projectDirectory);
             SaveProject(project, projectDirectory);
-            CloseMenu(menu);
-            ShowRoomEditor(owner, project, projectDirectory, chapter, room);
+            QueueMenuAction(menu, () =>
+                ShowInfo(
+                    owner,
+                    "CHAPTER BUILT",
+                    $"Built {project.ModName}/{chapter.Slug}. Restart Celeste if this is a brand-new map so Everest can discover it, then launch it from the normal chapter select.",
+                    main => ShowChapter(main, project, projectDirectory, chapter)));
         }));
 
         menu.Add(new TextMenu.Button("RENAME CHAPTER").Pressed(() => {
@@ -235,11 +245,12 @@ public sealed class BetterMapEditorModule : EverestModule {
         menu.Add(new TextMenu.Button("BUILD THIS CHAPTER").Pressed(() => {
             BuildChapter(project, chapter, projectDirectory);
             SaveProject(project, projectDirectory);
-            CloseMenu(menu);
-            ShowInfo(owner,
-                "CHAPTER WRITTEN",
-                $"Saved {project.ModName}/{chapter.Slug}.bin with {chapter.Rooms.Count} room(s).",
-                main => ShowChapter(main, project, projectDirectory, chapter));
+            QueueMenuAction(menu, () =>
+                ShowInfo(
+                    owner,
+                    "CHAPTER WRITTEN",
+                    $"Saved {project.ModName}/{chapter.Slug}.bin with {chapter.Rooms.Count} room(s).",
+                    main => ShowChapter(main, project, projectDirectory, chapter)));
         }));
 
         if (chapter.Rooms.Count > 0)
@@ -247,15 +258,25 @@ public sealed class BetterMapEditorModule : EverestModule {
 
         for (int i = 0; i < chapter.Rooms.Count; i++) {
             EditorRoom room = chapter.Rooms[i];
-            menu.Add(new TextMenu.Button($"{i + 1:00}  {room.Name}  {room.WidthTiles}x{room.HeightTiles}").Pressed(() => {
-                CloseMenu(menu);
-                ShowRoomEditor(owner, project, projectDirectory, chapter, room);
-            }));
+            menu.Add(
+                new TextMenu.Button($"{i + 1:00}  {room.Name}  {room.WidthTiles}x{room.HeightTiles}  @ {room.MapX},{room.MapY}")
+                .Pressed(() => {
+                    QueueMenuAction(menu, () =>
+                        ShowRoomEditor(
+                            owner,
+                            project,
+                            projectDirectory,
+                            chapter,
+                            room));
+                }));
         }
 
         menu.Add(new TextMenu.Button("BACK").Pressed(() => {
-            CloseMenu(menu);
-            ShowProject(owner, project, projectDirectory);
+            QueueMenuAction(menu, () =>
+                ShowProject(
+                    owner,
+                    project,
+                    projectDirectory));
         }));
     }
 
@@ -269,8 +290,8 @@ public sealed class BetterMapEditorModule : EverestModule {
         TextMenu menu = CreateMenu(title, owner);
         menu.Add(new WrappedTextItem(text, 900f));
         menu.Add(new TextMenu.Button("OK").Pressed(() => {
-            CloseMenu(menu);
-            onClose?.Invoke(owner);
+            QueueMenuAction(menu, () =>
+                onClose?.Invoke(owner));
         }));
     }
 
@@ -304,12 +325,32 @@ public sealed class BetterMapEditorModule : EverestModule {
             menu.Close();
     }
 
+    private static void QueueMenuAction(
+        TextMenu menu,
+        Action action) {
+
+        CloseMenu(menu);
+
+        Scene scene =
+            Engine.Scene;
+
+        if (scene == null) {
+            action?.Invoke();
+            return;
+        }
+
+        scene.OnEndOfFrame += () =>
+            action?.Invoke();
+    }
+
     private static void CloseOurOverlays() {
         Scene scene = Engine.Scene;
         if (scene == null)
             return;
 
         foreach (RoomEditorOverlay overlay in scene.Entities.OfType<RoomEditorOverlay>().ToArray())
+            overlay.RemoveSelf();
+        foreach (EditorPortalOverlay overlay in scene.Entities.OfType<EditorPortalOverlay>().ToArray())
             overlay.RemoveSelf();
         foreach (OptionalPointerController pointer in scene.Entities.OfType<OptionalPointerController>().ToArray())
             pointer.RemoveSelf();
@@ -435,15 +476,14 @@ public sealed class BetterMapEditorModule : EverestModule {
 
     private static MapElement BuildMapElement(EditorChapter chapter) {
         MapElement levels = new("levels");
-        int roomX = 0;
         int entityId = 0;
 
         foreach (EditorRoom room in chapter.Rooms) {
             room.Normalize();
             MapElement level = new MapElement("level")
                 .Attr("name", room.Name)
-                .Attr("x", roomX)
-                .Attr("y", 0)
+                .Attr("x", room.MapX)
+                .Attr("y", room.MapY)
                 .Attr("width", room.WidthTiles * 8)
                 .Attr("height", room.HeightTiles * 8)
                 .Attr("c", 0)
@@ -511,7 +551,6 @@ public sealed class BetterMapEditorModule : EverestModule {
             level.Child(new MapElement("bgdecals").Attr("tileset", "Scenery"));
 
             levels.Child(level);
-            roomX += room.WidthTiles * 8;
         }
 
         MapElement style = new MapElement("Style")
@@ -603,11 +642,27 @@ public sealed class BetterMapEditorModule : EverestModule {
             Rooms ??= new List<EditorRoom>();
             foreach (EditorRoom room in Rooms)
                 room.Normalize();
+
+            bool hasPositionedRooms =
+                Rooms.Any(room =>
+                    room.MapX != 0 ||
+                    room.MapY != 0);
+
+            if (!hasPositionedRooms) {
+                int x = 0;
+                foreach (EditorRoom room in Rooms) {
+                    room.MapX = x;
+                    room.MapY = 0;
+                    x += room.WidthTiles * 8;
+                }
+            }
         }
     }
 
     public sealed class EditorRoom {
         public string Name { get; set; } = "room_1";
+        public int MapX { get; set; }
+        public int MapY { get; set; }
         public int WidthTiles { get; set; } = 40;
         public int HeightTiles { get; set; } = 23;
         public List<string> SolidRows { get; set; } = new();
@@ -649,6 +704,12 @@ public sealed class BetterMapEditorModule : EverestModule {
             Name =
                 Slugify(Name)
                 .ToLowerInvariant();
+
+            MapX =
+                SnapRoomPosition(MapX);
+
+            MapY =
+                SnapRoomPosition(MapY);
 
             WidthTiles =
                 Math.Clamp(
@@ -809,6 +870,14 @@ public sealed class BetterMapEditorModule : EverestModule {
                             WidthTiles)),
                     HeightTiles));
         }
+
+        private static int SnapRoomPosition(
+            int value) {
+
+            return (int)Math.Round(
+                value / 8f) *
+                8;
+        }
     }
 
     public sealed class EditorEntity {
@@ -864,6 +933,667 @@ public sealed class BetterMapEditorModule : EverestModule {
         Spring,
         SpikesUp,
         Pan
+    }
+
+    private enum PortalMode {
+        Maps,
+        Map,
+        Chapters,
+        Chapter,
+        Info
+    }
+
+    private sealed class EditorPortalOverlay : Entity {
+        private readonly OuiMainMenu owner;
+        private readonly List<PortalRow> rows = new();
+        private List<ProjectEntry> projects = new();
+        private List<InstalledMapMod> installed = new();
+        private ProjectEntry selectedProject;
+        private EditorChapter selectedChapter;
+        private PortalMode mode = PortalMode.Maps;
+        private string title = "Map Editor";
+        private string subtitle = "Select a map";
+        private string infoText;
+        private int rowScroll;
+        private int totalRows;
+
+        private const float LeftX = 110f;
+        private const float TopY = 135f;
+        private const float LeftWidth = 620f;
+        private const float RightX = 770f;
+        private const float RightWidth = 1040f;
+        private const float PanelHeight = 805f;
+        private const float RowHeight = 72f;
+
+        public EditorPortalOverlay(
+            OuiMainMenu owner,
+            EditorProject project = null,
+            string projectDirectory = null)
+            : base(Vector2.Zero) {
+
+            this.owner = owner;
+            Tag = Tags.HUD | Tags.PauseUpdate;
+            Depth = -2000000;
+            Reload();
+
+            if (project != null &&
+                projectDirectory != null) {
+
+                selectedProject =
+                    new ProjectEntry(
+                        project,
+                        projectDirectory);
+                mode = PortalMode.Map;
+            }
+
+            Rebuild();
+        }
+
+        public override void Update() {
+            base.Update();
+
+            if (Input.MenuCancel.Pressed ||
+                MInput.Keyboard.Pressed(Keys.Escape)) {
+
+                Back();
+                return;
+            }
+
+            if (Math.Abs(MInput.Mouse.WheelDelta) >= 120f &&
+                IsInsideLeftPanel(MInput.Mouse.Position)) {
+
+                rowScroll =
+                    Math.Clamp(
+                        rowScroll +
+                            (MInput.Mouse.WheelDelta < 0f ? 1 : -1),
+                        0,
+                        Math.Max(0, totalRows - VisibleRows));
+
+                Rebuild();
+                return;
+            }
+
+            if (!MInput.Mouse.PressedLeftButton &&
+                !OptionalMobileBridge.ConsumeTouchTap()) {
+
+                return;
+            }
+
+            Vector2 pointer =
+                OptionalMobileBridge.TouchAvailable
+                    ? OptionalMobileBridge.TouchPosition
+                    : MInput.Mouse.Position;
+
+            foreach (PortalRow row in rows) {
+                if (row.Bounds.Contains(
+                        (int)pointer.X,
+                        (int)pointer.Y)) {
+
+                    Audio.Play("event:/ui/main/button_select");
+                    row.Action?.Invoke();
+                    return;
+                }
+            }
+        }
+
+        public override void Render() {
+            Draw.Rect(0f, 0f, 1920f, 1080f, new Color(8, 10, 14) * 0.98f);
+
+            ActiveFont.DrawOutline(
+                title,
+                new Vector2(110f, 64f),
+                new Vector2(0f, 0.5f),
+                Vector2.One * 0.72f,
+                Color.White,
+                2f,
+                Color.Black);
+
+            ActiveFont.DrawOutline(
+                subtitle,
+                new Vector2(112f, 108f),
+                new Vector2(0f, 0.5f),
+                Vector2.One * 0.36f,
+                Color.LightGray,
+                2f,
+                Color.Black);
+
+            DrawPanel(LeftX, TopY, LeftWidth, PanelHeight, new Color(19, 22, 30));
+            DrawPanel(RightX, TopY, RightWidth, PanelHeight, new Color(17, 20, 28));
+
+            foreach (PortalRow row in rows) {
+                row.Render();
+            }
+
+            if (totalRows > VisibleRows) {
+                ActiveFont.DrawOutline(
+                    $"{rowScroll + 1}-{Math.Min(totalRows, rowScroll + VisibleRows)} / {totalRows}",
+                    new Vector2(LeftX + LeftWidth - 26f, TopY + PanelHeight - 24f),
+                    new Vector2(1f, 0.5f),
+                    Vector2.One * 0.24f,
+                    Color.LightGray,
+                    2f,
+                    Color.Black);
+            }
+
+            RenderDetails();
+        }
+
+        private void Reload() {
+            projects = ScanProjects();
+            installed = ScanInstalledMapMods(projects.Select(p => p.Directory));
+        }
+
+        private void Rebuild() {
+            rows.Clear();
+            totalRows = 0;
+
+            switch (mode) {
+                case PortalMode.Maps:
+                    BuildMapRows();
+                    break;
+                case PortalMode.Map:
+                    BuildMapActionRows();
+                    break;
+                case PortalMode.Chapters:
+                    BuildChapterRows();
+                    break;
+                case PortalMode.Chapter:
+                    BuildChapterActionRows();
+                    break;
+                case PortalMode.Info:
+                    AddRow("OK", "Return", Back, 0, true);
+                    break;
+            }
+
+            int clampedScroll =
+                Math.Clamp(
+                    rowScroll,
+                    0,
+                    Math.Max(0, totalRows - VisibleRows));
+
+            if (clampedScroll != rowScroll) {
+                rowScroll = clampedScroll;
+                Rebuild();
+            }
+        }
+
+        private void BuildMapRows() {
+            title = "Map Editor";
+            subtitle = "Choose Celeste, a mod map, or create a new editable project.";
+
+            AddRow("Celeste", "Read only reference", () =>
+                ShowInfo("Celeste", "Vanilla Celeste maps are visible as a target, but this editor only creates and edits BetterMapEditor projects."), 0, false);
+
+            int row = 1;
+            foreach (ProjectEntry project in projects) {
+                ProjectEntry captured = project;
+                AddRow(
+                    captured.Project.Name,
+                    $"{captured.Project.Chapters.Count} chapters - editable",
+                    () => {
+                        selectedProject = captured;
+                        activeProject = captured.Project;
+                        activeProjectDirectory = captured.Directory;
+                        mode = PortalMode.Map;
+                        Rebuild();
+                    },
+                    row++,
+                    true);
+            }
+
+            foreach (InstalledMapMod mod in installed) {
+                InstalledMapMod captured = mod;
+                AddRow(
+                    captured.Name,
+                    $"{captured.MapCount} maps - read only",
+                    () => ShowInfo(captured.Name, "This map mod was not created by BetterMapEditor, so it is read-only. BetterMapEditor never overwrites an unknown map binary."),
+                    row++,
+                    false);
+            }
+
+            AddRow("+ New Map Mod", "Create an editable project", CreateProject, row + 1, true);
+            AddRow("Close", "Return to main menu", RemoveSelf, row + 2, false);
+        }
+
+        private void BuildMapActionRows() {
+            if (selectedProject == null) {
+                mode = PortalMode.Maps;
+                Rebuild();
+                return;
+            }
+
+            title = selectedProject.Project.Name;
+            subtitle = $"Mod ID: {selectedProject.Project.ModName}";
+
+            AddRow("Edit Chapters", "Open chapter selection", () => {
+                selectedProject.Project.Normalize();
+                SaveProject(selectedProject.Project, selectedProject.Directory);
+                mode = PortalMode.Chapters;
+                Rebuild();
+            }, 0, true);
+
+            AddRow("Build All", "Write all chapter map binaries", () => {
+                BuildAllMaps(selectedProject.Project, selectedProject.Directory);
+                SaveProject(selectedProject.Project, selectedProject.Directory);
+                ShowInfo("Maps written", $"Saved {selectedProject.Project.Chapters.Count} chapter map(s) into Mods/{selectedProject.Project.ModName}/Maps/{selectedProject.Project.ModName}.");
+            }, 1, true);
+
+            AddRow("Rename", "Rename this map project", RenameProject, 2, false);
+            AddRow("Back", "Return to map list", () => {
+                selectedProject = null;
+                Reload();
+                mode = PortalMode.Maps;
+                Rebuild();
+            }, 4, false);
+        }
+
+        private void BuildChapterRows() {
+            title = selectedProject.Project.Name;
+            subtitle = "Select a chapter or create a new one.";
+
+            int row = 0;
+            foreach (EditorChapter chapter in selectedProject.Project.Chapters) {
+                EditorChapter captured = chapter;
+                int number = row + 1;
+                AddRow(
+                    $"{number:00}  {captured.Name}",
+                    $"{captured.Rooms.Count} rooms - edit or test",
+                    () => {
+                        selectedChapter = captured;
+                        mode = PortalMode.Chapter;
+                        Rebuild();
+                    },
+                    row++,
+                    true);
+            }
+
+            AddRow("+ New Chapter", "Create a chapter in this map", CreateChapter, row + 1, true);
+            AddRow("Back", "Return to map actions", () => {
+                mode = PortalMode.Map;
+                Rebuild();
+            }, row + 2, false);
+        }
+
+        private void BuildChapterActionRows() {
+            if (selectedChapter == null) {
+                mode = PortalMode.Chapters;
+                Rebuild();
+                return;
+            }
+
+            int index =
+                selectedProject.Project.Chapters.IndexOf(selectedChapter) + 1;
+
+            title = selectedChapter.Name;
+            subtitle = $"Chapter {index:00} - {selectedProject.Project.ModName}/{selectedChapter.Slug}";
+
+            AddRow("Edit", "Open the one-view room editor", () => {
+                selectedChapter.Normalize();
+                if (selectedChapter.Rooms.Count == 0) {
+                    selectedChapter.Rooms.Add(EditorRoom.CreateDefault("room_1"));
+                    SaveProject(selectedProject.Project, selectedProject.Directory);
+                }
+
+                RemoveSelf();
+                ShowRoomEditor(
+                    owner,
+                    selectedProject.Project,
+                    selectedProject.Directory,
+                    selectedChapter,
+                    selectedChapter.Rooms[0]);
+            }, 0, true);
+
+            AddRow("Test Build", "Write this chapter map binary", () => {
+                BuildChapter(selectedProject.Project, selectedChapter, selectedProject.Directory);
+                SaveProject(selectedProject.Project, selectedProject.Directory);
+                ShowInfo("Chapter built", $"Built {selectedProject.Project.ModName}/{selectedChapter.Slug}. Launch it from Celeste after Everest discovers the map.");
+            }, 1, true);
+
+            AddRow("Rename", "Rename this chapter", RenameChapter, 2, false);
+            AddRow("Back", "Return to chapter selection", () => {
+                selectedChapter = null;
+                mode = PortalMode.Chapters;
+                Rebuild();
+            }, 4, false);
+        }
+
+        private void AddRow(
+            string label,
+            string detail,
+            Action action,
+            int row,
+            bool primary) {
+
+            totalRows =
+                Math.Max(
+                    totalRows,
+                    row + 1);
+
+            int visibleRow =
+                row - rowScroll;
+
+            if (visibleRow < 0 ||
+                visibleRow >= VisibleRows) {
+
+                return;
+            }
+
+            rows.Add(
+                new PortalRow(
+                    new Rectangle(
+                        (int)LeftX + 22,
+                        (int)(TopY + 24f + visibleRow * RowHeight),
+                        (int)LeftWidth - 44,
+                        58),
+                    label,
+                    detail,
+                    action,
+                    primary));
+        }
+
+        private const int VisibleRows = 10;
+
+        private static bool IsInsideLeftPanel(
+            Vector2 point) {
+
+            return point.X >= LeftX &&
+                point.X <= LeftX + LeftWidth &&
+                point.Y >= TopY &&
+                point.Y <= TopY + PanelHeight;
+        }
+
+        private void RenderDetails() {
+            string heading = mode switch {
+                PortalMode.Maps => "Library",
+                PortalMode.Map => "Map",
+                PortalMode.Chapters => "Chapters",
+                PortalMode.Chapter => "Chapter",
+                PortalMode.Info => title,
+                _ => "Editor"
+            };
+
+            ActiveFont.DrawOutline(
+                heading,
+                new Vector2(RightX + 34f, TopY + 46f),
+                new Vector2(0f, 0.5f),
+                Vector2.One * 0.52f,
+                Color.White,
+                2f,
+                Color.Black);
+
+            string body = mode switch {
+                PortalMode.Maps => "Editable projects are shown alongside Celeste and installed map mods. Read-only entries can be inspected without risking their map binaries.",
+                PortalMode.Map => $"Project path: Mods/{selectedProject?.Project.ModName}\nChapters: {selectedProject?.Project.Chapters.Count ?? 0}",
+                PortalMode.Chapters => "Each chapter can be edited in one room-layout view, then built for testing.",
+                PortalMode.Chapter => $"Rooms: {selectedChapter?.Rooms.Count ?? 0}\nBuild target: {selectedProject?.Project.ModName}/{selectedChapter?.Slug}.bin",
+                PortalMode.Info => infoText ?? string.Empty,
+                _ => string.Empty
+            };
+
+            DrawWrappedText(
+                body,
+                new Vector2(RightX + 36f, TopY + 105f),
+                RightWidth - 72f,
+                0.36f,
+                Color.LightGray);
+        }
+
+        private void ShowInfo(
+            string newTitle,
+            string text) {
+
+            title = newTitle;
+            subtitle = "Status";
+            infoText = text;
+            mode = PortalMode.Info;
+            Rebuild();
+        }
+
+        private void Back() {
+            switch (mode) {
+                case PortalMode.Maps:
+                    RemoveSelf();
+                    break;
+                case PortalMode.Map:
+                    selectedProject = null;
+                    Reload();
+                    mode = PortalMode.Maps;
+                    Rebuild();
+                    break;
+                case PortalMode.Chapters:
+                    mode = PortalMode.Map;
+                    Rebuild();
+                    break;
+                case PortalMode.Chapter:
+                    selectedChapter = null;
+                    mode = PortalMode.Chapters;
+                    Rebuild();
+                    break;
+                case PortalMode.Info:
+                    mode =
+                        selectedChapter != null
+                            ? PortalMode.Chapter
+                            : selectedProject != null
+                                ? PortalMode.Map
+                                : PortalMode.Maps;
+                    Rebuild();
+                    break;
+            }
+        }
+
+        private void CreateProject() {
+            RemoveSelf();
+            PromptString(owner, "NewMapMod", 40, value => {
+                string displayName = CleanDisplayName(value, "New Map Mod");
+                string slug = MakeUniqueModSlug(Slugify(displayName));
+                string dir = Path.Combine(GetModsDirectory(), slug);
+
+                EditorProject project = new() {
+                    Name = displayName,
+                    ModName = slug,
+                    Chapters = new List<EditorChapter>()
+                };
+
+                Directory.CreateDirectory(dir);
+                SaveProject(project, dir);
+                activeProject = project;
+                activeProjectDirectory = dir;
+                pendingMainMenuAction = main =>
+                    Engine.Scene.Add(
+                        new EditorPortalOverlay(
+                            main,
+                            project,
+                            dir));
+            });
+        }
+
+        private void CreateChapter() {
+            RemoveSelf();
+            PromptString(owner, $"Chapter {selectedProject.Project.Chapters.Count + 1}", 40, value => {
+                string name = CleanDisplayName(value, $"Chapter {selectedProject.Project.Chapters.Count + 1}");
+                string slug = MakeUniqueChapterSlug(selectedProject.Project, Slugify(name));
+                EditorChapter chapter = new() {
+                    Name = name,
+                    Slug = slug,
+                    Rooms = new List<EditorRoom> {
+                        EditorRoom.CreateDefault("room_1")
+                    }
+                };
+
+                selectedProject.Project.Chapters.Add(chapter);
+                SaveProject(selectedProject.Project, selectedProject.Directory);
+                pendingMainMenuAction = main =>
+                    Engine.Scene.Add(
+                        new EditorPortalOverlay(
+                            main,
+                            selectedProject.Project,
+                            selectedProject.Directory));
+            });
+        }
+
+        private void RenameProject() {
+            RemoveSelf();
+            PromptString(owner, selectedProject.Project.Name, 40, value => {
+                selectedProject.Project.Name = CleanDisplayName(value, selectedProject.Project.Name);
+                SaveProject(selectedProject.Project, selectedProject.Directory);
+                pendingMainMenuAction = main =>
+                    Engine.Scene.Add(
+                        new EditorPortalOverlay(
+                            main,
+                            selectedProject.Project,
+                            selectedProject.Directory));
+            });
+        }
+
+        private void RenameChapter() {
+            RemoveSelf();
+            PromptString(owner, selectedChapter.Name, 40, value => {
+                selectedChapter.Name = CleanDisplayName(value, selectedChapter.Name);
+                SaveProject(selectedProject.Project, selectedProject.Directory);
+                pendingMainMenuAction = main =>
+                    Engine.Scene.Add(
+                        new EditorPortalOverlay(
+                            main,
+                            selectedProject.Project,
+                            selectedProject.Directory));
+            });
+        }
+
+        private static void DrawPanel(
+            float x,
+            float y,
+            float width,
+            float height,
+            Color color) {
+
+            Draw.Rect(x, y, width, height, color);
+            Draw.HollowRect(x, y, width, height, Color.White * 0.16f);
+            Draw.Rect(x, y, width, 2f, Color.White * 0.22f);
+        }
+
+        private static void DrawWrappedText(
+            string text,
+            Vector2 position,
+            float width,
+            float scale,
+            Color color) {
+
+            string[] words =
+                (text ?? string.Empty)
+                .Replace("\r", string.Empty)
+                .Split(new[] { ' ', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+            StringBuilder line = new();
+            float y = position.Y;
+
+            foreach (string word in words) {
+                string next =
+                    line.Length == 0
+                        ? word
+                        : line + " " + word;
+
+                if (ActiveFont.Measure(next).X * scale > width &&
+                    line.Length > 0) {
+
+                    ActiveFont.DrawOutline(
+                        line.ToString(),
+                        new Vector2(position.X, y),
+                        new Vector2(0f, 0f),
+                        Vector2.One * scale,
+                        color,
+                        2f,
+                        Color.Black);
+
+                    line.Clear();
+                    line.Append(word);
+                    y += 42f;
+                } else {
+                    line.Clear();
+                    line.Append(next);
+                }
+            }
+
+            if (line.Length > 0) {
+                ActiveFont.DrawOutline(
+                    line.ToString(),
+                    new Vector2(position.X, y),
+                    new Vector2(0f, 0f),
+                    Vector2.One * scale,
+                    color,
+                    2f,
+                    Color.Black);
+            }
+        }
+
+        private sealed class PortalRow {
+            public readonly Rectangle Bounds;
+            public readonly string Label;
+            public readonly string Detail;
+            public readonly Action Action;
+            public readonly bool Primary;
+
+            public PortalRow(
+                Rectangle bounds,
+                string label,
+                string detail,
+                Action action,
+                bool primary) {
+
+                Bounds = bounds;
+                Label = label;
+                Detail = detail;
+                Action = action;
+                Primary = primary;
+            }
+
+            public void Render() {
+                bool hover =
+                    Bounds.Contains(
+                        (int)MInput.Mouse.X,
+                        (int)MInput.Mouse.Y);
+
+                Color fill =
+                    Primary
+                        ? new Color(43, 55, 72)
+                        : new Color(30, 34, 44);
+
+                Draw.Rect(
+                    Bounds.X,
+                    Bounds.Y,
+                    Bounds.Width,
+                    Bounds.Height,
+                    hover
+                        ? fill * 1.28f
+                        : fill);
+
+                Draw.HollowRect(
+                    Bounds.X,
+                    Bounds.Y,
+                    Bounds.Width,
+                    Bounds.Height,
+                    Primary
+                        ? Color.Cyan * 0.45f
+                        : Color.White * 0.22f);
+
+                ActiveFont.DrawOutline(
+                    Label,
+                    new Vector2(Bounds.X + 20f, Bounds.Y + 18f),
+                    new Vector2(0f, 0f),
+                    Vector2.One * 0.36f,
+                    Color.White,
+                    2f,
+                    Color.Black);
+
+                ActiveFont.DrawOutline(
+                    Detail,
+                    new Vector2(Bounds.X + 20f, Bounds.Y + 42f),
+                    new Vector2(0f, 0f),
+                    Vector2.One * 0.24f,
+                    Color.LightGray,
+                    2f,
+                    Color.Black);
+            }
+        }
     }
 
     private sealed class RoomEditorOverlay : Entity {
@@ -1084,7 +1814,8 @@ public sealed class BetterMapEditorModule : EverestModule {
                 ChangeZoom(
                     wheel > 0f
                         ? 0.12f
-                        : -0.12f);
+                        : -0.12f,
+                    pointer);
             }
 
             bool desktopPress =
@@ -1110,7 +1841,9 @@ public sealed class BetterMapEditorModule : EverestModule {
                 }
 
                 if ((tool == EditorTool.Pan ||
-                     panModifier) &&
+                     panModifier ||
+                     MInput.Mouse.CheckRightButton ||
+                     MInput.Mouse.CheckMiddleButton) &&
                     IsInsideCanvas(pointer)) {
 
                     desktopPanning = true;
@@ -1128,6 +1861,7 @@ public sealed class BetterMapEditorModule : EverestModule {
                         lastPanPointer;
 
                     pan += delta;
+                    ClampPan();
                     lastPanPointer =
                         pointer;
                 } else if (desktopPainting &&
@@ -1159,6 +1893,7 @@ public sealed class BetterMapEditorModule : EverestModule {
                     pan.Y +=
                         Math.Sign(touchScroll) *
                         70f;
+                    ClampPan();
                 }
 
                 if (OptionalMobileBridge
@@ -1187,17 +1922,45 @@ public sealed class BetterMapEditorModule : EverestModule {
                 0f,
                 1920f,
                 1080f,
-                Color.Black * 0.94f);
+                new Color(9, 11, 15));
+
+            Draw.Rect(
+                0f,
+                0f,
+                1920f,
+                112f,
+                new Color(18, 22, 30));
+
+            Draw.Rect(
+                0f,
+                872f,
+                1920f,
+                150f,
+                new Color(15, 18, 25));
+
+            Draw.Rect(
+                0f,
+                112f,
+                1920f,
+                2f,
+                Color.White * 0.12f);
+
+            Draw.Rect(
+                0f,
+                872f,
+                1920f,
+                2f,
+                Color.White * 0.12f);
 
             ActiveFont.DrawOutline(
                 $"{project.Name}  /  {chapter.Name}",
                 new Vector2(
-                    960f,
-                    40f),
+                    36f,
+                    34f),
                 new Vector2(
-                    0.5f,
+                    0f,
                     0.5f),
-                Vector2.One * 0.72f,
+                Vector2.One * 0.58f,
                 Color.White,
                 2f,
                 Color.Black);
@@ -1205,12 +1968,12 @@ public sealed class BetterMapEditorModule : EverestModule {
             ActiveFont.DrawOutline(
                 $"{room.Name}    {room.WidthTiles * 8} x {room.HeightTiles * 8}px    ZOOM {zoom:0.00}x",
                 new Vector2(
-                    960f,
-                    88f),
+                    38f,
+                    80f),
                 new Vector2(
-                    0.5f,
+                    0f,
                     0.5f),
-                Vector2.One * 0.42f,
+                Vector2.One * 0.34f,
                 Color.LightGray,
                 2f,
                 Color.Black);
@@ -1225,7 +1988,7 @@ public sealed class BetterMapEditorModule : EverestModule {
             }
 
             ActiveFont.DrawOutline(
-                "CTRL+S SAVE   CTRL+Z/Y UNDO/REDO   SPACE+DRAG PAN   WHEEL ZOOM   DELETE ENTITY",
+                "CTRL+S SAVE   CTRL+Z/Y UNDO/REDO   SPACE+DRAG PAN   WHEEL ZOOM   SHIFT+ARROWS MOVE ROOM   DELETE ENTITY",
                 new Vector2(
                     960f,
                     1048f),
@@ -1264,6 +2027,51 @@ public sealed class BetterMapEditorModule : EverestModule {
                     Keys.Y)) {
 
                 Redo();
+            }
+
+            Vector2 keyboardPan =
+                Vector2.Zero;
+
+            if (MInput.Keyboard.Check(Keys.Left)) {
+                keyboardPan.X += 1f;
+            }
+
+            if (MInput.Keyboard.Check(Keys.Right)) {
+                keyboardPan.X -= 1f;
+            }
+
+            if (MInput.Keyboard.Check(Keys.Up)) {
+                keyboardPan.Y += 1f;
+            }
+
+            if (MInput.Keyboard.Check(Keys.Down)) {
+                keyboardPan.Y -= 1f;
+            }
+
+            if (keyboardPan != Vector2.Zero) {
+                float speed =
+                    ctrl
+                        ? 720f
+                        : 360f;
+
+                if (MInput.Keyboard.Check(Keys.LeftShift) ||
+                    MInput.Keyboard.Check(Keys.RightShift)) {
+
+                    Vector2 roomDelta =
+                        -keyboardPan *
+                        8f;
+
+                    MoveCurrentRoom(
+                        (int)roomDelta.X,
+                        (int)roomDelta.Y);
+                } else {
+                    pan +=
+                        keyboardPan *
+                        speed *
+                        Engine.DeltaTime;
+
+                    ClampPan();
+                }
             }
 
             if (MInput.Keyboard.Pressed(
@@ -1436,9 +2244,6 @@ public sealed class BetterMapEditorModule : EverestModule {
 
             selectedEntity =
                 room.Entities.Count - 1;
-
-            tool =
-                EditorTool.Select;
         }
 
         private int FindEntityAt(
@@ -1511,9 +2316,6 @@ public sealed class BetterMapEditorModule : EverestModule {
                 2f,
                 Color.Black);
 
-            float y =
-                SidebarY + 65f;
-
             const float rowHeight =
                 52f;
 
@@ -1521,7 +2323,7 @@ public sealed class BetterMapEditorModule : EverestModule {
                 Math.Max(
                     1,
                     (int)(
-                        (SidebarHeight - 150f) /
+                        (SidebarHeight - 340f) /
                         rowHeight));
 
             int currentIndex =
@@ -1578,6 +2380,44 @@ public sealed class BetterMapEditorModule : EverestModule {
                     2f,
                     Color.Black);
             }
+
+            RenderRoomOverview();
+
+            RenderSmallSidebarButton(
+                GetMoveRoomRect(-1, 0),
+                "<",
+                Color.White * 0.10f);
+
+            RenderSmallSidebarButton(
+                GetMoveRoomRect(1, 0),
+                ">",
+                Color.White * 0.10f);
+
+            RenderSmallSidebarButton(
+                GetMoveRoomRect(0, -1),
+                "^",
+                Color.White * 0.10f);
+
+            RenderSmallSidebarButton(
+                GetMoveRoomRect(0, 1),
+                "v",
+                Color.White * 0.10f);
+
+            ActiveFont.DrawOutline(
+                $"{room.MapX},{room.MapY}",
+                new Vector2(
+                    SidebarX +
+                        SidebarWidth * 0.5f,
+                    SidebarY +
+                        SidebarHeight -
+                        162f),
+                new Vector2(
+                    0.5f,
+                    0.5f),
+                Vector2.One * 0.30f,
+                Color.LightGray,
+                2f,
+                Color.Black);
 
             Rectangle delete =
                 GetDeleteRoomRect();
@@ -1639,6 +2479,127 @@ public sealed class BetterMapEditorModule : EverestModule {
                 Vector2.One * 0.38f,
                 Color.White,
                 2f,
+                    Color.Black);
+        }
+
+        private void RenderRoomOverview() {
+            Rectangle rect =
+                GetRoomOverviewRect();
+
+            Draw.Rect(
+                rect.X,
+                rect.Y,
+                rect.Width,
+                rect.Height,
+                Color.Black * 0.24f);
+
+            Draw.HollowRect(
+                rect.X,
+                rect.Y,
+                rect.Width,
+                rect.Height,
+                Color.White * 0.25f);
+
+            if (chapter.Rooms.Count == 0) {
+                return;
+            }
+
+            int left =
+                chapter.Rooms.Min(r => r.MapX);
+            int top =
+                chapter.Rooms.Min(r => r.MapY);
+            int right =
+                chapter.Rooms.Max(r => r.MapX + r.WidthTiles * 8);
+            int bottom =
+                chapter.Rooms.Max(r => r.MapY + r.HeightTiles * 8);
+
+            float scale =
+                Math.Min(
+                    (rect.Width - 16f) /
+                        Math.Max(8f, right - left),
+                    (rect.Height - 16f) /
+                        Math.Max(8f, bottom - top));
+
+            foreach (EditorRoom candidate in
+                chapter.Rooms) {
+
+                float x =
+                    rect.X + 8f +
+                    (candidate.MapX - left) *
+                    scale;
+
+                float y =
+                    rect.Y + 8f +
+                    (candidate.MapY - top) *
+                    scale;
+
+                float width =
+                    Math.Max(
+                        5f,
+                        candidate.WidthTiles * 8 *
+                        scale);
+
+                float height =
+                    Math.Max(
+                        5f,
+                        candidate.HeightTiles * 8 *
+                        scale);
+
+                bool active =
+                    ReferenceEquals(
+                        candidate,
+                        room);
+
+                Draw.Rect(
+                    x,
+                    y,
+                    width,
+                    height,
+                    active
+                        ? Color.Cyan * 0.45f
+                        : Color.White * 0.18f);
+
+                Draw.HollowRect(
+                    x,
+                    y,
+                    width,
+                    height,
+                    active
+                        ? Color.Cyan
+                        : Color.White * 0.35f);
+            }
+        }
+
+        private static void RenderSmallSidebarButton(
+            Rectangle rect,
+            string label,
+            Color fill) {
+
+            Draw.Rect(
+                rect.X,
+                rect.Y,
+                rect.Width,
+                rect.Height,
+                fill);
+
+            Draw.HollowRect(
+                rect.X,
+                rect.Y,
+                rect.Width,
+                rect.Height,
+                Color.White * 0.45f);
+
+            ActiveFont.DrawOutline(
+                label,
+                new Vector2(
+                    rect.Center.X,
+                    rect.Center.Y),
+                new Vector2(
+                    0.5f,
+                    0.5f),
+                Vector2.One * 0.34f,
+                Color.White,
+                2f,
                 Color.Black);
         }
 
@@ -1659,6 +2620,38 @@ public sealed class BetterMapEditorModule : EverestModule {
 
             Rectangle delete =
                 GetDeleteRoomRect();
+
+            if (GetMoveRoomRect(-1, 0).Contains(
+                    (int)pointer.X,
+                    (int)pointer.Y)) {
+
+                MoveCurrentRoom(-8, 0);
+                return true;
+            }
+
+            if (GetMoveRoomRect(1, 0).Contains(
+                    (int)pointer.X,
+                    (int)pointer.Y)) {
+
+                MoveCurrentRoom(8, 0);
+                return true;
+            }
+
+            if (GetMoveRoomRect(0, -1).Contains(
+                    (int)pointer.X,
+                    (int)pointer.Y)) {
+
+                MoveCurrentRoom(0, -8);
+                return true;
+            }
+
+            if (GetMoveRoomRect(0, 1).Contains(
+                    (int)pointer.X,
+                    (int)pointer.Y)) {
+
+                MoveCurrentRoom(0, 8);
+                return true;
+            }
 
             if (delete.Contains(
                 (int)pointer.X,
@@ -1686,7 +2679,7 @@ public sealed class BetterMapEditorModule : EverestModule {
                 Math.Max(
                     1,
                     (int)(
-                        (SidebarHeight - 150f) /
+                        (SidebarHeight - 340f) /
                         rowHeight));
 
             int currentIndex =
@@ -1747,6 +2740,63 @@ public sealed class BetterMapEditorModule : EverestModule {
                 46);
         }
 
+        private static Rectangle GetMoveRoomRect(
+            int directionX,
+            int directionY) {
+
+            int size = 48;
+            int centerX =
+                (int)(
+                    SidebarX +
+                    SidebarWidth * 0.5f);
+            int centerY =
+                (int)(
+                    SidebarY +
+                    SidebarHeight -
+                    190f);
+
+            if (directionX < 0) {
+                return new Rectangle(
+                    centerX - size - 34,
+                    centerY - size / 2,
+                    size,
+                    size);
+            }
+
+            if (directionX > 0) {
+                return new Rectangle(
+                    centerX + 34,
+                    centerY - size / 2,
+                    size,
+                    size);
+            }
+
+            if (directionY < 0) {
+                return new Rectangle(
+                    centerX - size / 2,
+                    centerY - size - 12,
+                    size,
+                    size);
+            }
+
+            return new Rectangle(
+                centerX - size / 2,
+                centerY + 12,
+                size,
+                size);
+        }
+
+        private static Rectangle GetRoomOverviewRect() {
+            return new Rectangle(
+                (int)SidebarX + 10,
+                (int)(
+                    SidebarY +
+                    SidebarHeight -
+                    274f),
+                (int)SidebarWidth - 20,
+                64);
+        }
+
         private static Rectangle GetDeleteRoomRect() {
             return new Rectangle(
                 (int)SidebarX + 10,
@@ -1767,6 +2817,22 @@ public sealed class BetterMapEditorModule : EverestModule {
                     66f),
                 (int)SidebarWidth - 20,
                 52);
+        }
+
+        private void MoveCurrentRoom(
+            int deltaX,
+            int deltaY) {
+
+            if (deltaX == 0 &&
+                deltaY == 0) {
+
+                return;
+            }
+
+            room.MapX += deltaX;
+            room.MapY += deltaY;
+            room.Normalize();
+            SaveCurrentProjectOnly();
         }
 
         private void DeleteCurrentRoom() {
@@ -1813,6 +2879,15 @@ public sealed class BetterMapEditorModule : EverestModule {
             EditorRoom created =
                 EditorRoom.CreateDefault(
                     name);
+
+            created.MapX =
+                chapter.Rooms.Count == 0
+                    ? 0
+                    : chapter.Rooms.Max(existing =>
+                        existing.MapX +
+                        existing.WidthTiles * 8);
+
+            created.MapY = 0;
 
             chapter.Rooms.Add(
                 created);
@@ -2205,21 +3280,135 @@ public sealed class BetterMapEditorModule : EverestModule {
                     90);
 
             room.Normalize();
+            ClampPan();
         }
 
         private void ChangeZoom(
-            float delta) {
+            float delta,
+            Vector2? anchor = null) {
+
+            Vector2 before = Vector2.Zero;
+            bool anchorInside =
+                anchor.HasValue &&
+                TryScreenToRoom(
+                    anchor.Value,
+                    out before);
+
+            float oldZoom =
+                zoom;
 
             zoom =
                 Math.Clamp(
                     zoom + delta,
                     0.35f,
                     4f);
+
+            if (anchorInside &&
+                Math.Abs(zoom - oldZoom) > 0.001f) {
+
+                GetCanvasTransform(
+                    out float cell,
+                    out float originX,
+                    out float originY);
+
+                pan +=
+                    anchor.Value -
+                    new Vector2(
+                        originX + before.X * cell,
+                        originY + before.Y * cell);
+            }
+
+            ClampPan();
         }
 
         private void ResetViewport() {
             zoom = 1f;
             pan = Vector2.Zero;
+            ClampPan();
+        }
+
+        private bool TryScreenToRoom(
+            Vector2 pointer,
+            out Vector2 roomPoint) {
+
+            GetCanvasTransform(
+                out float cell,
+                out float originX,
+                out float originY);
+
+            float width =
+                room.WidthTiles *
+                cell;
+
+            float height =
+                room.HeightTiles *
+                cell;
+
+            if (pointer.X < originX ||
+                pointer.Y < originY ||
+                pointer.X >= originX + width ||
+                pointer.Y >= originY + height) {
+
+                roomPoint = Vector2.Zero;
+                return false;
+            }
+
+            roomPoint =
+                new Vector2(
+                    (pointer.X - originX) / cell,
+                    (pointer.Y - originY) / cell);
+
+            return true;
+        }
+
+        private void ClampPan() {
+            float fit =
+                Math.Min(
+                    CanvasWidth /
+                        room.WidthTiles,
+                    CanvasHeight /
+                        room.HeightTiles);
+
+            float cell =
+                Math.Max(
+                    2f,
+                    fit * zoom);
+
+            float width =
+                room.WidthTiles *
+                cell;
+
+            float height =
+                room.HeightTiles *
+                cell;
+
+            float maxX =
+                Math.Max(
+                    0f,
+                    (width - CanvasWidth) *
+                    0.5f +
+                    CanvasWidth *
+                    0.15f);
+
+            float maxY =
+                Math.Max(
+                    0f,
+                    (height - CanvasHeight) *
+                    0.5f +
+                    CanvasHeight *
+                    0.15f);
+
+            pan.X =
+                Calc.Clamp(
+                    pan.X,
+                    -maxX,
+                    maxX);
+
+            pan.Y =
+                Calc.Clamp(
+                    pan.Y,
+                    -maxY,
+                    maxY);
         }
 
         private void PushUndo() {
@@ -2415,9 +3604,18 @@ public sealed class BetterMapEditorModule : EverestModule {
                         EditorTool.Pan);
 
                 Color fill =
-                    selected
-                        ? Color.White * 0.28f
-                        : Color.White * 0.12f;
+                    GetButtonColor(Label);
+
+                bool hover =
+                    Rect.Contains(
+                        (int)MInput.Mouse.X,
+                        (int)MInput.Mouse.Y);
+
+                if (selected) {
+                    fill = Color.Lerp(fill, Color.White, 0.32f);
+                } else if (hover) {
+                    fill = Color.Lerp(fill, Color.White, 0.14f);
+                }
 
                 Draw.Rect(
                     Rect.X,
@@ -2426,12 +3624,23 @@ public sealed class BetterMapEditorModule : EverestModule {
                     Rect.Height,
                     fill);
 
+                if (selected) {
+                    Draw.Rect(
+                        Rect.X,
+                        Rect.Y,
+                        Rect.Width,
+                        4,
+                        Color.Cyan);
+                }
+
                 Draw.HollowRect(
                     Rect.X,
                     Rect.Y,
                     Rect.Width,
                     Rect.Height,
-                    Color.White * 0.8f);
+                    selected
+                        ? Color.Cyan * 0.95f
+                        : Color.White * 0.38f);
 
                 ActiveFont.DrawOutline(
                     Label,
@@ -2441,10 +3650,35 @@ public sealed class BetterMapEditorModule : EverestModule {
                     new Vector2(
                         0.5f,
                         0.5f),
-                    Vector2.One * 0.38f,
+                    Vector2.One * 0.34f,
                     Color.White,
                     2f,
                     Color.Black);
+            }
+
+            private static Color GetButtonColor(
+                string label) {
+
+                return label switch {
+                    "SOLID" =>
+                        new Color(92, 74, 60),
+                    "ERASE" =>
+                        new Color(74, 48, 58),
+                    "SPAWN" =>
+                        new Color(36, 88, 92),
+                    "BERRY" =>
+                        new Color(104, 38, 54),
+                    "SPRING" =>
+                        new Color(45, 96, 58),
+                    "SPIKES" =>
+                        new Color(88, 88, 96),
+                    "SAVE" =>
+                        new Color(42, 82, 64),
+                    "BACK" =>
+                        new Color(70, 58, 82),
+                    _ =>
+                        new Color(38, 44, 56)
+                };
             }
         }
     }
