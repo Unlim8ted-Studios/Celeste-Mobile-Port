@@ -4692,7 +4692,7 @@ function bootStatus(message) {
       node.style.display = "none";
     }
   });
-  if (message === "starting game" || message === "complete") {
+  if (message === "complete") {
     window.celesteForceGameVisible?.();
   }
 }
@@ -4908,6 +4908,8 @@ async function start(canvas) {
     if (window.assetblob) {
       URL.revokeObjectURL(window.assetblob);
     }
+    const domCanvas = document.getElementById("canvas") || document.querySelector("canvas");
+    canvas = window.celestePrepareCanvas?.(domCanvas || canvas, { resizeBacking: true }) || domCanvas || canvas;
     runtime.Module.canvas = canvas;
 
     // Ensure Everest metadata exists to prevent NRE
@@ -4992,16 +4994,13 @@ async function start(canvas) {
     }
 
     bootStatus("starting game");
-    window.celesteForceGameVisible?.();
     for (let i = 0; i < 5; i++) {
       if (!await loaderExports.CelesteLoader.RunOneFrame()) {
         throw new Error("Celeste exited during startup");
       }
     }
-    window.celesteForceGameVisible?.();
     window.celesteLogCanvasState?.("after startup frames");
-    setTimeout(() => window.celesteLogCanvasState?.("after displayed timeout"), 1500);
-    if (hideIntroSplash) hideIntroSplash();
+    setTimeout(() => window.celesteLogCanvasState?.("post-render timeout"), 1500);
     localStorage["celeste_first_run_complete"] = "true";
     startPersistenceLoop();
     await loaderExports.CelesteLoader.MainLoop();

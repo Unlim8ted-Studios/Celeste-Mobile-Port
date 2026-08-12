@@ -6471,6 +6471,11 @@ var _emscripten_glStencilOpSeparate = _glStencilOpSeparate;
 
 /** @suppress {duplicate } */ function _glTexImage2D(target, level, internalFormat, width, height, border, format, type, pixels) {
  pixels >>>= 0;
+ if (internalFormat === 0x8C41) {
+  console.warn("[android-port] rewriting GL_RGB16F texImage2D to GL_RGBA16F");
+  internalFormat = 0x881A;
+  if (format === 0x1907) format = 0x1908;
+ }
  if (true) {
   if (GLctx.currentPixelUnpackBufferBinding) {
    GLctx.texImage2D(target, level, internalFormat, width, height, border, format, type, pixels);
@@ -6522,7 +6527,13 @@ var _emscripten_glTexParameteri = _glTexParameteri;
 
 var _emscripten_glTexParameteriv = _glTexParameteriv;
 
-/** @suppress {duplicate } */ var _glTexStorage2D = (x0, x1, x2, x3, x4) => GLctx.texStorage2D(x0, x1, x2, x3, x4);
+/** @suppress {duplicate } */ var _glTexStorage2D = (x0, x1, x2, x3, x4) => {
+ if (x2 === 0x8C41) {
+  console.warn("[android-port] rewriting GL_RGB16F texStorage2D to GL_RGBA16F");
+  x2 = 0x881A;
+ }
+ GLctx.texStorage2D(x0, x1, x2, x3, x4);
+};
 
 var _emscripten_glTexStorage2D = _glTexStorage2D;
 
