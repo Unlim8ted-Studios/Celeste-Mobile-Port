@@ -20,10 +20,6 @@ Developed by <a href="https://unlim8ted.com">Unlim8ted Studios</a>
 > Celeste game files are not distributed with this repository.
 > Building a playable copy requires files from a legally obtained copy of Celeste.
 
-> [!NOTE]
-> **Project status: Active development.**
-> The Android port has been mostly implemented and tested. Multiplayer hosting, map editing, iOS support, and modified-Everest compatibility remain under development.
-
 ## Table of Contents
 
 - [Overview](#overview)
