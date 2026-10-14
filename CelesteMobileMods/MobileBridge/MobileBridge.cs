@@ -21,6 +21,12 @@ public sealed class MobileBridgeSettings : EverestModuleSettings {
     private bool hapticFeedback = true;
     private bool controlsAlwaysOn;
 
+    private bool keyboardControls;
+    public bool KeyboardControls {
+        get => keyboardControls;
+        set { keyboardControls = value; MobileBridgeApi.SetOption("keyboard_controls", value); }
+    }
+
     public bool ControlsAlwaysOn {
         get => controlsAlwaysOn;
         set { controlsAlwaysOn = value; MobileBridgeApi.SetOption("controls_always_on", value); }
@@ -280,6 +286,24 @@ public sealed class MobileBridgeModule : EverestModule {
                 "MOBILE CONTROLS"));
         menu.Add(new TextMenu.OnOff("SHOW CONTROLS", Settings.TouchControls)
             .Change(value => Settings.TouchControls = value));
+        TextMenu.Button keyboardConfig = new("CONFIGURE KEYBOARD") {
+            Visible = Settings.KeyboardControls
+        };
+        keyboardConfig.Pressed(() => {
+            if (menu.Scene == null) return;
+            menu.Focused = false;
+            KeyboardConfigUI config = new();
+            config.OnClose = () => {
+                if (menu.Scene != null) menu.Focused = true;
+            };
+            Engine.Scene.Add(config);
+        });
+        menu.Add(new TextMenu.OnOff("KEYBOARD CONTROLS", Settings.KeyboardControls)
+            .Change(value => {
+                Settings.KeyboardControls = value;
+                keyboardConfig.Visible = value;
+            }));
+        menu.Add(keyboardConfig);
         menu.Add(new TextMenu.OnOff("ON-SCREEN CONTROLS ALWAYS ON", Settings.ControlsAlwaysOn)
             .Change(value => Settings.ControlsAlwaysOn = value));
 
@@ -387,6 +411,7 @@ public sealed class MobileBridgeModule : EverestModule {
             "touch_controls",
             settings.TouchControls);
         MobileBridgeApi.SetOption("controls_always_on", settings.ControlsAlwaysOn);
+        MobileBridgeApi.SetOption("keyboard_controls", settings.KeyboardControls);
 
         MobileBridgeApi.SetOption(
             "joystick_mode",
@@ -701,6 +726,8 @@ public static partial class MobileBridgeApi {
     private static partial void JsOpenNamePrompt(string currentName);
     [JSImport("celesteAndroidConsumeNamePrompt", "android-port.js")]
     private static partial string JsConsumeNamePrompt();
+    [JSImport("celesteAndroidPhysicalKeyboardSeen", "android-port.js")]
+    private static partial bool JsPhysicalKeyboardSeen();
 #else
     private static string JsConsumeOptions() => "";
     private static void JsSetGameplay(bool gameplay) { }
@@ -765,6 +792,7 @@ public static partial class MobileBridgeApi {
         "";
     private static void JsOpenNamePrompt(string currentName) { }
     private static string JsConsumeNamePrompt() => "";
+    private static bool JsPhysicalKeyboardSeen() => false;
 #endif
 
     public static bool IsBrowser {
@@ -779,6 +807,15 @@ public static partial class MobileBridgeApi {
 
     public static bool TouchAvailable =>
         IsBrowser && !(MobileBridgeModule.Instance?._Settings is MobileBridgeSettings settings && settings.ControlsAlwaysOn);
+    public static bool PhysicalKeyboardSeen {
+        get {
+            try {
+                return IsBrowser &&
+                    MobileBridgeModule.Instance?._Settings is MobileBridgeSettings settings &&
+                    settings.KeyboardControls && JsPhysicalKeyboardSeen();
+            } catch { return false; }
+        }
+    }
 
     public static void SetGameplay(bool gameplay) => Invoke(() => JsSetGameplay(gameplay));
     public static void OpenNamePrompt(string currentName) => Invoke(() => JsOpenNamePrompt(currentName));

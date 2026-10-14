@@ -39,6 +39,7 @@
   let pauseOnly = false;
   let alwaysOn = read('celeste.option.controls_always_on', false) === true;
   let enabled = read('celeste.option.touch_controls', true) !== false;
+  let keyboardControls = read('celeste.option.keyboard_controls', false) === true;
   let joystick = read('celeste.option.joystick_mode', true) !== false;
   let snap = read('celeste.option.joystick_snap_8way', true) !== false;
   let layout = read('celeste.touch.layout.v1', {});
@@ -52,12 +53,12 @@
     ['crouch-dash', 'Crouch dash', 'KeyV', 76, 84, 66]
   ];
   function refresh() {
-    root.classList.toggle('visible', editing || gameplay || pauseOnly || alwaysOn);
+    root.classList.toggle('visible', !keyboardControls && (editing || gameplay || pauseOnly || alwaysOn));
     for (const c of controls) {
       const p = layout[c.id] || { x:c.x, y:c.y, size:c.size };
       c.button.style.left = `${p.x}%`; c.button.style.top = `${p.y}%`;
       c.button.style.width = c.button.style.height = `${p.size}px`;
-      c.button.hidden = !enabled || (!editing && !alwaysOn && pauseOnly && c.id !== 'pause') || (c.id === 'stick' ? !joystick : ['up','down','left','right'].includes(c.id) && joystick);
+      c.button.hidden = keyboardControls || !enabled || (!editing && !alwaysOn && pauseOnly && c.id !== 'pause') || (c.id === 'stick' ? !joystick : ['up','down','left','right'].includes(c.id) && joystick);
     }
   }
   function edit(value) { release(); editing = value; root.classList.toggle('editing', value); refresh(); }
@@ -106,6 +107,7 @@
     release();
     if(key==='pause_only')pauseOnly=value;
     if(key==='touch_controls')enabled=value;
+    if(key==='keyboard_controls') { keyboardControls=value; if(value && editing)edit(false); }
     if(key==='controls_always_on')alwaysOn=value;
     if(key==='joystick_mode')joystick=value;
     if(key==='joystick_snap_8way')snap=value;
@@ -127,7 +129,7 @@
   addEventListener('celeste-option-changed',event=>setOption(event.detail.key,String(event.detail.value).toLowerCase()==='true'));
   window.celesteAndroidSetGameplay=value=>{if(gameplay!==!!value)release();gameplay=!!value;refresh();console.info('[android-port] gameplay controls state: '+gameplay);};
   document.addEventListener('pointerdown',event=>{
-    if(editing || !enabled || !gameplay || event.target.closest('#celeste-touch-controls,dialog'))return;
+    if(editing || keyboardControls || !enabled || !gameplay || event.target.closest('#celeste-touch-controls,dialog'))return;
     let nearest=null, best=Infinity;
     for(const c of controls) {
       if(c.button.hidden || c.id==='pause')continue;

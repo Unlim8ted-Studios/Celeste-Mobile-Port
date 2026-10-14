@@ -156,7 +156,7 @@ public sealed class MouseUIModule : EverestModule {
             UpdateDesktopPointer();
         }
 
-        bool shouldDisableMInputForTouch = UsingTouch &&
+        bool shouldDisableMInputForTouch = UsingTouch && !OptionalMobileBridge.PhysicalKeyboardSeen && !IsKeyboardConfigOpen() &&
             (Engine.Scene is Overworld || IsAnyMenuOpen(Engine.Scene));
 
         if (shouldDisableMInputForTouch && !ownsMInputDisabled) {
@@ -218,7 +218,7 @@ public sealed class MouseUIModule : EverestModule {
     }
 
     private static void ConsumeGameMenuInputWhenUsingTouch() {
-        if (!UsingTouch) {
+        if (!UsingTouch || OptionalMobileBridge.PhysicalKeyboardSeen || IsKeyboardConfigOpen()) {
             return;
         }
 
@@ -232,6 +232,9 @@ public sealed class MouseUIModule : EverestModule {
         Input.Pause.ConsumeBuffer();
         Input.ESC.ConsumeBuffer();
     }
+
+    private static bool IsKeyboardConfigOpen() =>
+        Engine.Scene?.Entities.OfType<KeyboardConfigUI>().Any(menu => menu.Visible) == true;
 
     private static bool IsAnyMenuOpen(Scene scene) {
         return scene != null &&
@@ -1365,6 +1368,7 @@ public sealed class MouseUIModule : EverestModule {
 
         private static Type apiType;
         private static PropertyInfo touchAvailableProperty;
+        private static PropertyInfo physicalKeyboardSeenProperty;
         private static MethodInfo consumeTouchTapMethod;
         private static MethodInfo touchXMethod;
         private static MethodInfo touchYMethod;
@@ -1385,6 +1389,14 @@ public sealed class MouseUIModule : EverestModule {
                     ClearBinding();
                     return false;
                 }
+            }
+        }
+
+        public static bool PhysicalKeyboardSeen {
+            get {
+                EnsureResolved();
+                try { return physicalKeyboardSeenProperty != null && (bool)physicalKeyboardSeenProperty.GetValue(null); }
+                catch { return false; }
             }
         }
 
@@ -1476,6 +1488,9 @@ public sealed class MouseUIModule : EverestModule {
             touchAvailableProperty = apiType.GetProperty(
                 "TouchAvailable",
                 BindingFlags.Public | BindingFlags.Static);
+            physicalKeyboardSeenProperty = apiType.GetProperty(
+                "PhysicalKeyboardSeen",
+                BindingFlags.Public | BindingFlags.Static);
             consumeTouchTapMethod = apiType.GetMethod(
                 "ConsumeTouchTap",
                 BindingFlags.Public | BindingFlags.Static);
@@ -1505,6 +1520,7 @@ public sealed class MouseUIModule : EverestModule {
         private static void ClearBinding() {
             apiType = null;
             touchAvailableProperty = null;
+            physicalKeyboardSeenProperty = null;
             consumeTouchTapMethod = null;
             touchXMethod = null;
             touchYMethod = null;

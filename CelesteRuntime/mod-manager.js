@@ -19,6 +19,7 @@
   };
   function status(message){dialog.querySelector('[role=status]').textContent=message;}
   async function refresh(){
+    await window.celesteBootMaintenance?.();
     const mods=await window.celesteListInstalledMods();
     const container=dialog.querySelector('[data-mods]');container.replaceChildren();
     for(const mod of mods){

@@ -75,7 +75,19 @@
             addEventListener("wheel", (event) => {
                 if (isGameTouch(event)) touch.scroll -= event.deltaY;
             }, { passive: true });
-            window.celesteAndroidHaptic = (strength, length) => syncBridge("haptic", { strength, length });
+            let lastHapticAt = 0;
+            window.celesteAndroidHaptic = (strength, length) => {
+                const now = performance.now();
+                if (now - lastHapticAt < 45) return;
+                lastHapticAt = now;
+                const query = new URLSearchParams({ strength, length });
+                fetch("/__android_bridge/haptic?" + query, { cache: "no-store" }).catch(() => {});
+            };
+            let physicalKeyboardSeen = false;
+            addEventListener("keydown", event => {
+                if (event.isTrusted && !["Shift", "Control", "Alt", "Meta"].includes(event.key)) physicalKeyboardSeen = true;
+            }, true);
+            window.celesteAndroidPhysicalKeyboardSeen = () => physicalKeyboardSeen;
             window.celesteAndroidOpenUrl = (url) => syncBridge("openUrl", { url });
             window.celesteAndroidOpenModBrowser = () => {
                 window.celesteOpenModManager?.();

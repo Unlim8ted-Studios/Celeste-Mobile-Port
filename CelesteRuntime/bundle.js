@@ -4809,6 +4809,7 @@ async function initOnce() {
     celesteAndroidTouchY: () => Number(globalThis.celesteAndroidTouchY?.() ?? -1),
     celesteAndroidTouchDown: () => !!globalThis.celesteAndroidTouchDown?.(),
     celesteAndroidConsumeTouchScroll: () => Number(globalThis.celesteAndroidConsumeTouchScroll?.() ?? 0),
+    celesteAndroidPhysicalKeyboardSeen: () => !!globalThis.celesteAndroidPhysicalKeyboardSeen?.(),
     celesteAndroidStartCelesteNetHost: (port) => !!globalThis.celesteAndroidStartCelesteNetHost?.(port),
     celesteAndroidStopCelesteNetHost: () => globalThis.celesteAndroidStopCelesteNetHost?.(),
     celesteAndroidIsCelesteNetHostRunning: () => !!globalThis.celesteAndroidIsCelesteNetHostRunning?.(),
@@ -5359,6 +5360,7 @@ async function ensureEverestPatched() {
   if (!runtimeFileExists(FS, "/libsdl/CustomCeleste.dll")) throw new Error("Seeded Celeste.dll is missing");
 }
 async function downloadsave() {
+  await window.celesteBootMaintenance?.();
   await persistRuntimeDir("/libsdl/Celeste/Saves");
   let tozip = {};
   if (!dotnet.instance.Module.FS.analyzePath("/libsdl/Celeste").exists) {
@@ -5384,8 +5386,10 @@ async function downloadsave() {
   let blob = new Blob([zipped], { type: "application/zip" });
   let url = URL.createObjectURL(blob);
   let a = h("a", { href: url, download: "saves.zip" });
+  document.body.appendChild(a);
   a.click();
   a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 window.celesteDownloadSave = downloadsave;
 function sanitizeModFileName(name) {
@@ -5517,6 +5521,7 @@ async function uploadsave() {
       input.click();
     });
     if (!file) return;
+    await window.celesteBootMaintenance?.();
     const count = await unzipsave(file);
     alert("Imported " + count + " save file(s). Restart the app to load them. Existing saves were backed up before replacement.");
   } catch (error) { alert("Save import failed: " + (error.message || error)); }
@@ -6133,6 +6138,8 @@ function IntroSplash() {
   };
   const hasBootedBefore = localStorage["celeste_first_run_complete"] === "true";
   let maintenanceReady;
+  let frontendReady;
+  let ensureFrontend = () => frontendReady ??= loadfrontend();
   let finishStarted = false;
   let prepareMaintenance = async () => {
     if (!maintenanceReady) {
@@ -6143,7 +6150,7 @@ function IntroSplash() {
         } else {
           window.assetblob = null;
         }
-        await loadfrontend();
+        await ensureFrontend();
         await init();
         console.info("Cached and loaded assets into VFS");
         localStorage["vfs_populated"] = true;
@@ -6170,17 +6177,19 @@ function IntroSplash() {
     };
   };
   let openModManager = async () => {
-    await prepareMaintenance();
     window.celesteAndroidOpenModBrowser?.();
   };
   let exportSave = async () => {
-    await prepareMaintenance();
-    await window.celesteDownloadSave?.();
+    await ensureFrontend();
+    window.celesteAndroidOpenSaveData?.();
+    prepareMaintenance().catch(error => console.error("Save manager initialization failed", error));
   };
   let loadSave = async () => {
-    await prepareMaintenance();
+    await ensureFrontend();
     window.celesteAndroidLoadSave?.();
+    prepareMaintenance().catch(error => console.error("Save manager initialization failed", error));
   };
+  window.celesteBootMaintenance = prepareMaintenance;
   let resetGame = async () => {
     try {
       localStorage.removeItem("vfs_populated");
