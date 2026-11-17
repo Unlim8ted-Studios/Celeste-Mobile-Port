@@ -10,7 +10,8 @@ import android.provider.DocumentsContract;
 import android.database.Cursor;
 import android.os.Bundle;
 import android.util.Log;
-import android.view.View;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.Window;
 import android.widget.FrameLayout;
 import android.widget.TextView;
@@ -33,13 +34,15 @@ import org.mozilla.geckoview.GeckoView;
 import org.mozilla.geckoview.GeckoResult;
 import org.mozilla.geckoview.WebResponse;
 import org.mozilla.geckoview.AllowOrDeny;
+import org.mozilla.gecko.AndroidGamepadManager;
 import java.util.ArrayList;
 
 public final class MainActivity extends Activity {
     private LocalAssetServer assetServer;
     private AndroidBridge bridge;
-    private GeckoRuntime runtime;
+    private static GeckoRuntime runtime;
     private GeckoSession session;
+    private GeckoView gameView;
     private FrameLayout root;
     private GameFiles gameFiles;
     private TextView setupStatus;
@@ -56,6 +59,16 @@ public final class MainActivity extends Activity {
         root = new FrameLayout(this);
         root.setBackgroundColor(-16777216);
         setContentView(root);
+        RunningGame retained = (RunningGame) getLastNonConfigurationInstance();
+        if (retained != null) {
+            session = retained.session;
+            assetServer = retained.assetServer;
+            bridge = retained.bridge;
+            bridge.attach(this);
+            configureSession();
+            attachGameView();
+            return;
+        }
         if (BuildConfig.PUBLIC_PACKAGE) {
             try {
                 gameFiles = new GameFiles(getFilesDir(), getAssets().open("game-files.tsv"));
@@ -69,72 +82,114 @@ public final class MainActivity extends Activity {
         root.removeAllViews();
         try {
             this.bridge = new AndroidBridge(this);
-            this.assetServer = new LocalAssetServer(this, "CelesteRuntime", this.bridge);
+            this.assetServer = new LocalAssetServer(getApplicationContext(), "CelesteRuntime", this.bridge);
             this.assetServer.start();
             File geckoConfig = writeGeckoConfig();
-            GeckoRuntimeSettings settings = new GeckoRuntimeSettings.Builder().aboutConfigEnabled(true).consoleOutput(false).debugLogging(false).configFilePath(geckoConfig.getAbsolutePath()).build();
-            this.runtime = GeckoRuntime.create(this, settings);
+            GeckoRuntimeSettings settings = new GeckoRuntimeSettings.Builder().aboutConfigEnabled(true).remoteDebuggingEnabled(BuildConfig.DEBUG).consoleOutput(false).debugLogging(false).configFilePath(geckoConfig.getAbsolutePath()).build();
+            if (runtime == null) runtime = GeckoRuntime.create(getApplicationContext(), settings);
             this.session = new GeckoSession();
-            this.session.setPromptDelegate(new GeckoSession.PromptDelegate() {
-                @Override public GeckoResult<PromptResponse> onAlertPrompt(GeckoSession session, AlertPrompt prompt) {
-                    GeckoResult<PromptResponse> answer = new GeckoResult<>();
-                    new AlertDialog.Builder(MainActivity.this).setTitle(prompt.title).setMessage(prompt.message)
-                        .setPositiveButton("OK", (dialog, which) -> answer.complete(prompt.dismiss()))
-                        .setOnCancelListener(dialog -> answer.complete(prompt.dismiss())).show();
-                    return answer;
-                }
-                @Override public GeckoResult<PromptResponse> onButtonPrompt(GeckoSession session, ButtonPrompt prompt) {
-                    GeckoResult<PromptResponse> answer = new GeckoResult<>();
-                    new AlertDialog.Builder(MainActivity.this).setTitle(prompt.title).setMessage(prompt.message)
-                        .setPositiveButton("OK", (dialog, which) -> answer.complete(prompt.confirm(ButtonPrompt.Type.POSITIVE)))
-                        .setNegativeButton("Cancel", (dialog, which) -> answer.complete(prompt.confirm(ButtonPrompt.Type.NEGATIVE)))
-                        .setOnCancelListener(dialog -> answer.complete(prompt.dismiss())).show();
-                    return answer;
-                }
-                @Override public GeckoResult<PromptResponse> onTextPrompt(GeckoSession session, TextPrompt prompt) {
-                    GeckoResult<PromptResponse> answer = new GeckoResult<>();
-                    EditText input = new EditText(MainActivity.this);
-                    input.setSingleLine(true);
-                    input.setText(prompt.defaultValue);
-                    new AlertDialog.Builder(MainActivity.this).setTitle(prompt.title).setMessage(prompt.message)
-                        .setView(input).setPositiveButton("OK", (dialog, which) -> answer.complete(prompt.confirm(input.getText().toString())))
-                        .setNegativeButton("Cancel", (dialog, which) -> answer.complete(prompt.dismiss()))
-                        .setOnCancelListener(dialog -> answer.complete(prompt.dismiss())).show();
-                    return answer;
-                }
-                @Override public GeckoResult<PromptResponse> onFolderUploadPrompt(GeckoSession session, FolderUploadPrompt prompt) {
-                    return GeckoResult.fromValue(prompt.confirm(AllowOrDeny.ALLOW));
-                }
-                @Override public GeckoResult<PromptResponse> onFilePrompt(GeckoSession session, FilePrompt prompt) {
-                    Log.i("CelesteFilePicker", "Web file prompt received");
-                    if (pendingFileResult != null) return GeckoResult.fromValue(prompt.dismiss());
-                    pendingFilePrompt = prompt;
-                    pendingFileResult = new GeckoResult<>();
-                    GeckoResult<PromptResponse> response = pendingFileResult;
-                    Intent picker = prompt.type == FilePrompt.Type.FOLDER
-                        ? new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
-                        : new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
-                    if (prompt.type == FilePrompt.Type.MULTIPLE) picker.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-                    try { startActivityForResult(picker, 44); }
-                    catch (Exception error) { finishFilePrompt(null); }
-                    return response;
-                }
-            });
-            this.session.setContentDelegate(new GeckoSession.ContentDelegate() {
-                @Override public void onExternalResponse(GeckoSession session, WebResponse response) {
-                    if (response.body == null) return;
-                    new Thread(() -> prepareDownload(response), "celeste-web-download").start();
-                }
-            });
+            configureSession();
             this.session.open(this.runtime);
-            GeckoView view = new GeckoView(this);
-            view.setBackgroundColor(-16777216);
-            root.addView((View) view, new FrameLayout.LayoutParams(-1, -1));
-            view.setSession(this.session);
+            this.session.setPriorityHint(GeckoSession.PRIORITY_HIGH);
+            attachGameView();
             this.session.loadUri(this.assetServer.getRootUrl());
         } catch (Exception ex) {
             showError(ex);
         }
+    }
+
+    private void configureSession() {
+        this.session.setPromptDelegate(new GeckoSession.PromptDelegate() {
+            @Override public GeckoResult<PromptResponse> onAlertPrompt(GeckoSession session, AlertPrompt prompt) {
+                GeckoResult<PromptResponse> answer = new GeckoResult<>();
+                new AlertDialog.Builder(MainActivity.this).setTitle(prompt.title).setMessage(prompt.message)
+                    .setPositiveButton("OK", (dialog, which) -> answer.complete(prompt.dismiss()))
+                    .setOnCancelListener(dialog -> answer.complete(prompt.dismiss())).show();
+                return answer;
+            }
+            @Override public GeckoResult<PromptResponse> onButtonPrompt(GeckoSession session, ButtonPrompt prompt) {
+                GeckoResult<PromptResponse> answer = new GeckoResult<>();
+                new AlertDialog.Builder(MainActivity.this).setTitle(prompt.title).setMessage(prompt.message)
+                    .setPositiveButton("OK", (dialog, which) -> answer.complete(prompt.confirm(ButtonPrompt.Type.POSITIVE)))
+                    .setNegativeButton("Cancel", (dialog, which) -> answer.complete(prompt.confirm(ButtonPrompt.Type.NEGATIVE)))
+                    .setOnCancelListener(dialog -> answer.complete(prompt.dismiss())).show();
+                return answer;
+            }
+            @Override public GeckoResult<PromptResponse> onTextPrompt(GeckoSession session, TextPrompt prompt) {
+                GeckoResult<PromptResponse> answer = new GeckoResult<>();
+                EditText input = new EditText(MainActivity.this);
+                input.setSingleLine(true);
+                input.setText(prompt.defaultValue);
+                new AlertDialog.Builder(MainActivity.this).setTitle(prompt.title).setMessage(prompt.message)
+                    .setView(input).setPositiveButton("OK", (dialog, which) -> answer.complete(prompt.confirm(input.getText().toString())))
+                    .setNegativeButton("Cancel", (dialog, which) -> answer.complete(prompt.dismiss()))
+                    .setOnCancelListener(dialog -> answer.complete(prompt.dismiss())).show();
+                return answer;
+            }
+            @Override public GeckoResult<PromptResponse> onFolderUploadPrompt(GeckoSession session, FolderUploadPrompt prompt) {
+                return GeckoResult.fromValue(prompt.confirm(AllowOrDeny.ALLOW));
+            }
+            @Override public GeckoResult<PromptResponse> onFilePrompt(GeckoSession session, FilePrompt prompt) {
+                Log.i("CelesteFilePicker", "Web file prompt received");
+                if (pendingFileResult != null) return GeckoResult.fromValue(prompt.dismiss());
+                pendingFilePrompt = prompt;
+                pendingFileResult = new GeckoResult<>();
+                GeckoResult<PromptResponse> response = pendingFileResult;
+                Intent picker = prompt.type == FilePrompt.Type.FOLDER
+                    ? new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+                    : new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
+                if (prompt.type == FilePrompt.Type.MULTIPLE) picker.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                try { startActivityForResult(picker, 44); }
+                catch (Exception error) { finishFilePrompt(null); }
+                return response;
+            }
+        });
+        this.session.setContentDelegate(new GeckoSession.ContentDelegate() {
+            @Override public void onExternalResponse(GeckoSession session, WebResponse response) {
+                if (response.body == null) return;
+                new Thread(() -> prepareDownload(response), "celeste-web-download").start();
+            }
+        });
+    }
+
+    private void attachGameView() {
+        gameView = new GeckoView(this);
+        gameView.setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW);
+        gameView.setBackgroundColor(-16777216);
+        root.addView(gameView, new FrameLayout.LayoutParams(-1, -1));
+        gameView.setSession(session);
+        gameView.requestFocus();
+    }
+
+    @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        if (session != null && AndroidGamepadManager.handleKeyEvent(event)) return true;
+        return super.dispatchKeyEvent(event);
+    }
+
+    @Override public boolean dispatchGenericMotionEvent(MotionEvent event) {
+        if (session != null && AndroidGamepadManager.handleMotionEvent(event)) return true;
+        return super.dispatchGenericMotionEvent(event);
+    }
+
+    @Override public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus && gameView != null) gameView.requestFocus();
+    }
+
+    private static final class RunningGame {
+        final GeckoSession session;
+        final LocalAssetServer assetServer;
+        final AndroidBridge bridge;
+
+        RunningGame(MainActivity activity) {
+            session = activity.session;
+            assetServer = activity.assetServer;
+            bridge = activity.bridge;
+        }
+    }
+
+    @Override public Object onRetainNonConfigurationInstance() {
+        return session == null ? null : new RunningGame(this);
     }
 
     private void showError(Exception ex) {
@@ -386,6 +441,14 @@ public final class MainActivity extends Activity {
     @Override // android.app.Activity
     protected void onDestroy() {
         finishFilePrompt(null);
+        if (isChangingConfigurations() && session != null) {
+            if (gameView != null) gameView.releaseSession();
+            session.setPromptDelegate(null);
+            session.setContentDelegate(null);
+            bridge.attach(null);
+            super.onDestroy();
+            return;
+        }
         if (this.session != null) {
             this.session.close();
             this.session = null;

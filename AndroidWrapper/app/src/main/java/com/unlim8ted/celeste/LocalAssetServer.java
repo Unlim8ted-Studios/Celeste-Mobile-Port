@@ -100,7 +100,7 @@ final class LocalAssetServer {
             String method = parts[0];
             String rawTarget = parts[1];
 
-            drainHeaders(reader);
+            String range = readRangeHeader(reader);
 
             if (!"GET".equals(method) && !"HEAD".equals(method)) {
                 sendText(out, 405, "Method Not Allowed", "Method Not Allowed");
@@ -133,6 +133,37 @@ final class LocalAssetServer {
             }
 
             try (InputStream in = asset.stream) {
+                if (range != null && asset.length >= 0) {
+                    long[] bounds = parseRange(range, asset.length);
+                    if (bounds == null) {
+                        writeHeaders(out, 416, "Range Not Satisfiable", asset.mimeType, 0,
+                            "Content-Range: bytes */" + asset.length + "\r\n");
+                        return;
+                    }
+                    long length = bounds[1] - bounds[0] + 1;
+                    writeHeaders(out, 206, "Partial Content", asset.mimeType, length,
+                        "Accept-Ranges: bytes\r\nContent-Range: bytes " + bounds[0] + "-" + bounds[1] + "/" + asset.length + "\r\n");
+                    if (!"HEAD".equals(method)) {
+                        long remaining = bounds[0];
+                        while (remaining > 0) {
+                            long skipped = in.skip(remaining);
+                            if (skipped == 0) {
+                                if (in.read() == -1) throw new IOException("Truncated asset");
+                                skipped = 1;
+                            }
+                            remaining -= skipped;
+                        }
+                        byte[] buffer = new byte[65536];
+                        while (length > 0) {
+                            int count = in.read(buffer, 0, (int)Math.min(buffer.length, length));
+                            if (count == -1) throw new IOException("Truncated asset range");
+                            out.write(buffer, 0, count);
+                            length -= count;
+                        }
+                        out.flush();
+                    }
+                    return;
+                }
                 Log.i(TAG, "200 " + method + " /" + path + " " + asset.mimeType + " length=" + asset.length);
                 writeHeaders(out, 200, "OK", asset.mimeType, asset.length);
                 if (!"HEAD".equals(method)) {
@@ -234,14 +265,31 @@ final class LocalAssetServer {
         return path2;
     }
 
-    private void drainHeaders(BufferedReader reader) throws IOException {
+    private String readRangeHeader(BufferedReader reader) throws IOException {
+        String range = null;
         String line;
-        do {
-            line = reader.readLine();
-            if (line == null) {
-                return;
+        while ((line = reader.readLine()) != null && !line.isEmpty()) {
+            if (line.regionMatches(true, 0, "Range:", 0, 6)) range = line.substring(6).trim();
+        }
+        return range;
+    }
+
+    static long[] parseRange(String range, long size) {
+        if (size <= 0 || !range.matches("bytes=[0-9]*-[0-9]*")) return null;
+        String[] parts = range.substring(6).split("-", -1);
+        try {
+            long start, end;
+            if (parts[0].isEmpty()) {
+                long suffix = Long.parseLong(parts[1]);
+                if (suffix <= 0) return null;
+                start = Math.max(0, size - suffix);
+                end = size - 1;
+            } else {
+                start = Long.parseLong(parts[0]);
+                end = parts[1].isEmpty() ? size - 1 : Math.min(Long.parseLong(parts[1]), size - 1);
             }
-        } while (!line.isEmpty());
+            return start < size && end >= start ? new long[]{start, end} : null;
+        } catch (NumberFormatException error) { return null; }
     }
 
     private void sendText(OutputStream out, int status, String reason, String text) throws IOException {
@@ -252,6 +300,10 @@ final class LocalAssetServer {
     }
 
     private void writeHeaders(OutputStream out, int status, String reason, String contentType, long length) throws IOException {
+        writeHeaders(out, status, reason, contentType, length, "");
+    }
+
+    private void writeHeaders(OutputStream out, int status, String reason, String contentType, long length, String extra) throws IOException {
         StringBuilder headers = new StringBuilder();
         headers.append("HTTP/1.1 ").append(status).append(' ').append(reason).append("\r\n");
         headers.append("Content-Type: ").append(contentType).append("\r\n");
@@ -259,6 +311,7 @@ final class LocalAssetServer {
             headers.append("Content-Length: ").append(length).append("\r\n");
         }
         headers.append("Connection: close\r\n");
+        headers.append(extra);
         headers.append("Cache-Control: no-cache\r\n");
         headers.append("Cross-Origin-Opener-Policy: same-origin\r\n");
         headers.append("Cross-Origin-Embedder-Policy: require-corp\r\n");

@@ -13,15 +13,20 @@ import java.util.Locale;
 
 final class AndroidBridge implements LocalAssetServer.NativeBridge {
     private static final String TAG = "CelesteAndroidBridge";
-    private final Activity activity;
+    private Activity activity;
     private Process hostProcess;
 
     AndroidBridge(Activity activity) {
         this.activity = activity;
     }
 
+    synchronized void attach(Activity activity) {
+        this.activity = activity;
+    }
+
     @Override
     public synchronized String handle(String command, String query) {
+        if (activity == null) return "";
         try {
             switch (command) {
                 case "haptic":

@@ -4736,7 +4736,7 @@ async function initOnce() {
       "--jiterpreter-trace-monitoring-max-average-penalty=150",
       "--jiterpreter-wasm-bytes-limit=67108864",
       "--jiterpreter-table-size=32768"
-    ]).withDiagnosticTracing(true).create();
+    ]).withDiagnosticTracing(false).create();
   } catch (err) {
     const detail = err && (err.stack || err.message || String(err)) || "unknown error";
     console.error("[android-port] dotnet runtime create failed", err);
@@ -4844,13 +4844,21 @@ async function initOnce() {
   window.celesteDataRoot = "/libsdl/Content";
   ensurePackagedContentRoot();
   if (!FS.analyzePath("/libsdl/Content/Graphics").exists && !FS.analyzePath("/libsdl/Content/Dialog").exists) {
-    bootStatus("installing game data");
-    await loadData(runtime.Module, null, {
+    bootStatus("opening installed game data");
+    const mounted = await window.mountGameData(runtime.Module, {
       onProgress: (loaded, total) => bootStatus(
-        "installing game data: " + Math.floor(loaded / 1048576) + " / " + Math.ceil(total / 1048576) + " MiB",
+        "loading game data: " + Math.floor(loaded / 1048576) + " / " + Math.ceil(total / 1048576) + " MiB",
         55 + 12 * loaded / total)
     });
-    console.info("Loaded packaged Celeste assets into runtime VFS");
+    if (!mounted) {
+      bootStatus("installing game data");
+      await loadData(runtime.Module, null, {
+        onProgress: (loaded, total) => bootStatus(
+          "installing game data: " + Math.floor(loaded / 1048576) + " / " + Math.ceil(total / 1048576) + " MiB",
+          55 + 12 * loaded / total)
+      });
+      console.info("Loaded packaged Celeste assets into runtime VFS");
+    }
   }
   bootStatus("seeding runtime");
   await seedCelesteRuntime();
@@ -4996,6 +5004,11 @@ async function start(canvas) {
     try {
       await loaderExports.CelesteLoader.Init(false);
       console.info("[android-port] CelesteLoader.Init successful");
+      try {
+        await persistRuntimeDir("/libsdl/Celeste/Mods/Cache");
+      } catch (error) {
+        console.warn("[android-port] mod cache persistence unavailable", error);
+      }
     } catch (initErr) {
       console.error(`[android-port] CelesteLoader.Init failed with error: ${initErr}`);
       if (initErr && initErr.stack) console.error(`[android-port] .NET Stack trace: ${initErr.stack}`);
@@ -5033,25 +5046,27 @@ async function start(canvas) {
     starting = false;
   }
 }
-async function writeAssetIfChanged(url, path) {
+async function writeAssetIfChanged(url, path, additionalPaths = []) {
   const FS = dotnet.instance.Module.FS;
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
   const data = new Uint8Array(await response.arrayBuffer());
-  try {
-    if (runtimeFileExists(FS, path)) FS.unlink(path);
-  } catch {
-  }
-  FS.writeFile(path, data, { canOwn: true });
-  const seeded = runtimeFileExists(FS, path) ? FS.stat(path).size : -1;
-  if (seeded !== data.length) {
-    throw new Error(`Failed to seed ${path}`);
+  for (const destination of [path, ...additionalPaths]) {
+    try {
+      if (runtimeFileExists(FS, destination)) FS.unlink(destination);
+    } catch {
+    }
+    FS.writeFile(destination, data, { canOwn: true });
+    const seeded = runtimeFileExists(FS, destination) ? FS.stat(destination).size : -1;
+    if (seeded !== data.length) {
+      throw new Error(`Failed to seed ${destination}`);
+    }
   }
   return true;
 }
 function runtimeFileExists(FS, path) {
   try {
-    return !FS.isDir?.(FS.stat(path).mode);
+    return (FS.stat(path).mode & 0xf000) === 0x8000;
   } catch {
     return false;
   }
@@ -5239,9 +5254,8 @@ async function seedCelesteRuntime() {
   let changedEverest = false;
   for (const dll of everestDlls) {
     bootStatus("seeding runtime: " + dll);
-    const c1 = await writeAssetIfChanged(`celeste/Everest/${dll}`, `/libsdl/Celeste/Everest/${dll}`);
-    const c2 = await writeAssetIfChanged(`celeste/Everest/${dll}`, `/libsdl/${dll}`);
-    changedEverest = c1 || c2 || changedEverest;
+    const changed = await writeAssetIfChanged(`celeste/Everest/${dll}`, `/libsdl/Celeste/Everest/${dll}`, [`/libsdl/${dll}`]);
+    changedEverest = changed || changedEverest;
   }
   if (changedCeleste || changedEverest) {
     bootStatus("seeding runtime: cleanup patched files");
@@ -5253,7 +5267,7 @@ async function seedCelesteRuntime() {
 }
 const persistenceDbName = "celeste-android-port-vfs";
 const persistenceStoreName = "files";
-const persistentDirs = ["/libsdl/Celeste/Saves", "/libsdl/Celeste/Mods"];
+const persistentDirs = ["/libsdl/Celeste/Saves", "/libsdl/Celeste/Mods", "/libsdl/Celeste/Mods/Cache"];
 let persistenceDbPromise;
 let persistenceLoopStarted = false;
 function openPersistenceDb() {

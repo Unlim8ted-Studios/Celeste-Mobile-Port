@@ -1,4 +1,33 @@
-// Stream the content archive into WasmFS without retaining a second 434 MB copy.
+function validateGameData(files) {
+  let expected = 0;
+  const names = new Set();
+  for (const file of files) {
+    if (!file.filename.startsWith('/libsdl/Content/') || file.filename.includes('..') || file.filename.includes('\\') ||
+        !Number.isSafeInteger(file.start) || !Number.isSafeInteger(file.end) || file.start !== expected || file.end < file.start ||
+        names.has(file.filename)) throw new Error('Invalid game data metadata');
+    names.add(file.filename);
+    expected = file.end;
+  }
+  if (!expected) throw new Error('Empty game data metadata');
+  return expected;
+}
+
+window.mountGameData = async function(activeModule, options = {}) {
+  if (typeof activeModule.celesteMountContentArchive !== 'function') return false;
+  const files = options.metadata || package_metadata;
+  const total = validateGameData(files);
+  const url = options.url || window.assetblob || '_framework/data/data.data';
+  try {
+    await activeModule.celesteMountContentArchive(files, new URL(url, location.href).href, total, options.onProgress);
+    console.info('[game-data] mounted installed game archive in shared memory');
+    return true;
+  } catch (error) {
+    console.warn('[game-data] direct archive access unavailable; using streaming loader', error);
+    return false;
+  }
+};
+
+// Fallback for runtimes without shared archive support.
 window.loadData = async function(activeModule, onComplete, options = {}) {
   const FS = activeModule.FS;
   const files = options.metadata || package_metadata;
@@ -36,14 +65,7 @@ window.loadData = async function(activeModule, onComplete, options = {}) {
     return !result.done;
   }
   try {
-    let expected = 0;
-    for (const file of files) {
-      if (!file.filename.startsWith('/libsdl/Content/') || file.filename.includes('..') || file.filename.includes('\\') ||
-          !Number.isSafeInteger(file.start) || !Number.isSafeInteger(file.end) || file.start !== expected || file.end < file.start)
-        throw new Error('Invalid game data metadata');
-      expected = file.end;
-    }
-    if (!total) throw new Error('Empty game data metadata');
+    validateGameData(files);
     activeModule.addRunDependency('datafile_data.data'); dependency = true;
     console.info('[game-data] streaming ' + total + ' bytes into WasmFS');
     const response = await withTimeout(fetch(url, { signal: controller.signal, cache: 'no-store' }));

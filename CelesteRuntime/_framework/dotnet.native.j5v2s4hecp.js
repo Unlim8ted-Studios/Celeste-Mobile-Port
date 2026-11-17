@@ -2957,7 +2957,108 @@ function __wasmfs_copy_preloaded_file_data(index, buffer) {
 
 var wasmFS$backends = {};
 
+globalThis.__celesteRenderState = () => ({
+ frames: Browser.mainLoop.currentFrameNumber, running: Browser.mainLoop.running,
+ hasLoop: !!Browser.mainLoop.func, method: Browser.mainLoop.method,
+ canvas: Module.canvas ? [Module.canvas.width, Module.canvas.height] : null,
+ contexts: GL.contexts.filter(Boolean).map(c => ({handle:c.handle,
+  lost:c.GLctx.isContextLost(), size:[c.GLctx.canvas.width,c.GLctx.canvas.height],
+  viewport:Array.from(c.GLctx.getParameter(c.GLctx.VIEWPORT))}))
+});
+
 var wasmFS$JSMemoryFiles = {};
+
+function celesteCreateArchiveBackend(entries, archive) {
+ return {
+  allocFile: () => {},
+  freeFile: file => entries.delete(file),
+  getSize: file => entries.get(file).end - entries.get(file).start,
+  write: () => -69, // EROFS
+  read: (file, buffer, length, offset) => {
+   try {
+    const entry = entries.get(file);
+    length = Math.max(0, Math.min(length, entry.end - entry.start - offset));
+    const position = archive + entry.start + offset;
+    GROWABLE_HEAP_U8().copyWithin(buffer, position, position + length);
+    return length;
+   } catch (error) {
+    console.error("Game archive read failed", error);
+    return -29; // EIO
+   }
+  }
+ };
+}
+
+function celesteArchiveBackend(backend) {
+ if (wasmFS$backends[backend]) return wasmFS$backends[backend];
+ // The native environment is shared by all pthreads, including workers that
+ // start after mounting. Publish descriptors once; never proxy file reads.
+ const pointer = withStackSave(() => _mono_wasm_getenv(stringToUTF8OnStack("CELESTE_ARCHIVE_" + backend)));
+ if (!pointer) throw new Error("Unknown archive backend " + backend);
+ let state;
+ try { state = JSON.parse(UTF8ToString(pointer)); }
+ finally { _free(pointer); }
+ return wasmFS$backends[backend] = celesteCreateArchiveBackend(new Map(state.entries), state.archive);
+}
+
+Module["celesteMountContentArchive"] = async (files, url, total, onProgress) => {
+ const archive = _malloc(total);
+ if (!archive) throw new Error("Not enough memory for game data");
+ const backend = _wasmfs_create_jsimpl_backend();
+ const entries = new Map();
+ const ops = wasmFS$backends[backend] = celesteCreateArchiveBackend(entries, archive);
+ let creating;
+ ops.allocFile = file => entries.set(file, { start: creating.start, end: creating.end });
+ const created = [];
+ const controller = new AbortController();
+ const timeout = setTimeout(() => controller.abort(), 60000);
+ let reader;
+ try {
+  const response = await fetch(url, { signal: controller.signal, cache: "no-store" });
+  if (!response.ok) throw new Error("Game data HTTP " + response.status);
+  const size = response.headers.get("Content-Length");
+  if (size !== null && Number(size) !== total) throw new Error("Game archive size mismatch");
+  reader = response.body.getReader();
+  let loaded = 0, reported = 0;
+  for (;;) {
+   const { value, done } = await reader.read();
+   if (done) break;
+   if (loaded + value.length > total) throw new Error("Oversized game archive");
+   GROWABLE_HEAP_U8().set(value, archive + loaded);
+   loaded += value.length;
+   if (loaded === total || performance.now() - reported > 100) {
+    reported = performance.now();
+    onProgress?.(loaded, total);
+   }
+  }
+  if (loaded !== total) throw new Error("Truncated game archive");
+  clearTimeout(timeout);
+  for (const entry of files) {
+   FS.mkdirTree(entry.filename.slice(0, entry.filename.lastIndexOf("/")));
+   creating = entry;
+   const fd = withStackSave(() => _wasmfs_create_file(stringToUTF8OnStack(entry.filename), 292, backend));
+   FS.handleError(fd);
+   created.push(entry.filename);
+   FS.close({ fd });
+  }
+  const state = JSON.stringify({ entries: Array.from(entries), archive });
+  const value = stringToNewUTF8(state);
+  try {
+   withStackSave(() => _mono_wasm_setenv(stringToUTF8OnStack("CELESTE_ARCHIVE_" + backend), value));
+  } finally { _free(value); }
+ } catch (error) {
+  for (const path of created) FS.unlink(path);
+  _free(archive);
+  throw error;
+ } finally {
+  clearTimeout(timeout);
+  controller.abort();
+  if (reader) {
+   reader.cancel().catch(() => {});
+   reader.releaseLock();
+  }
+ }
+};
 
 var __wasmfs_create_js_file_backend_js = function(backend) {
  backend >>>= 0;
@@ -3152,13 +3253,13 @@ async function __wasmfs_jsimpl_async_write(ctx, backend, file, buffer, length, o
 function __wasmfs_jsimpl_free_file(backend, file) {
  backend >>>= 0;
  file >>>= 0;
- return wasmFS$backends[backend].freeFile(file);
+ return celesteArchiveBackend(backend).freeFile(file);
 }
 
 function __wasmfs_jsimpl_get_size(backend, file) {
  backend >>>= 0;
  file >>>= 0;
- return wasmFS$backends[backend].getSize(file);
+ return celesteArchiveBackend(backend).getSize(file);
 }
 
 function __wasmfs_jsimpl_read(backend, file, buffer, length, offset) {
@@ -3167,10 +3268,11 @@ function __wasmfs_jsimpl_read(backend, file, buffer, length, offset) {
  buffer >>>= 0;
  length >>>= 0;
  offset = bigintToI53Checked(offset);
- if (!wasmFS$backends[backend].read) {
+ const ops = celesteArchiveBackend(backend);
+ if (!ops.read) {
   return -28;
  }
- return wasmFS$backends[backend].read(file, buffer, length, offset);
+ return ops.read(file, buffer, length, offset);
 }
 
 function __wasmfs_jsimpl_write(backend, file, buffer, length, offset) {
@@ -3179,10 +3281,11 @@ function __wasmfs_jsimpl_write(backend, file, buffer, length, offset) {
  buffer >>>= 0;
  length >>>= 0;
  offset = bigintToI53Checked(offset);
- if (!wasmFS$backends[backend].write) {
+ const ops = celesteArchiveBackend(backend);
+ if (!ops.write) {
   return -28;
  }
- return wasmFS$backends[backend].write(file, buffer, length, offset);
+ return ops.write(file, buffer, length, offset);
 }
 
 var FS_stdin_getChar_buffer = [];
