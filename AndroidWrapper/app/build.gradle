@@ -49,8 +49,8 @@ android {
         applicationId "com.unlim8ted.celeste"
         minSdk 26
         targetSdk 35
-        versionCode 23
-        versionName "1.0.1-preview.7"
+        versionCode 24
+        versionName "1.0.1-preview.8"
         buildConfigField "boolean", "PUBLIC_PACKAGE", publicPackage.toString()
         buildConfigField "String", "OWNERSHIP_SERVICE", '"' + ownershipService + '"'
         ndk {
@@ -110,6 +110,9 @@ dependencies {
 
 afterEvaluate {
     tasks.matching { it.name == "mergeDebugAssets" || it.name == "mergeReleaseAssets" }.configureEach {
+        dependsOn tasks.named("stageCelesteRuntimeAssets")
+    }
+    tasks.matching { it.name.toLowerCase().contains("lint") }.configureEach {
         dependsOn tasks.named("stageCelesteRuntimeAssets")
     }
     tasks.matching { it.name == "assembleDebug" || it.name == "assembleRelease" || it.name == "bundleDebug" || it.name == "bundleRelease" }.configureEach {

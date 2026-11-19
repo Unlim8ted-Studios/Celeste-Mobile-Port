@@ -1,5 +1,5 @@
 - Name: MouseUI
-  Version: 1.0.0
+  Version: 1.0.1
   DLL: MouseUI.dll
   Dependencies:
     - Name: EverestCore

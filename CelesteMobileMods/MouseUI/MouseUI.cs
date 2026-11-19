@@ -40,6 +40,7 @@ public sealed class MouseUIModule : EverestModule {
         On.Celeste.OuiCredits.Update += OnCreditsUpdate;
         On.Celeste.OuiAssistMode.Update += OnAssistModeUpdate;
         On.Celeste.Postcard.DisplayRoutine += OnPostcardDisplayRoutine;
+        On.Celeste.Textbox.ContinuePressed += OnTextboxContinuePressed;
         On.Celeste.Pico8.Emulator.btn += OnPico8Button;
         On.Monocle.Engine.Update += OnEngineUpdate;
         On.Monocle.MInput.Update += OnMInputUpdate;
@@ -59,6 +60,7 @@ public sealed class MouseUIModule : EverestModule {
         On.Celeste.OuiCredits.Update -= OnCreditsUpdate;
         On.Celeste.OuiAssistMode.Update -= OnAssistModeUpdate;
         On.Celeste.Postcard.DisplayRoutine -= OnPostcardDisplayRoutine;
+        On.Celeste.Textbox.ContinuePressed -= OnTextboxContinuePressed;
         On.Celeste.Pico8.Emulator.btn -= OnPico8Button;
         On.Monocle.Engine.Update -= OnEngineUpdate;
         On.Monocle.MInput.Update -= OnMInputUpdate;
@@ -104,6 +106,16 @@ public sealed class MouseUIModule : EverestModule {
             Input.MenuConfirm.ConsumeBuffer();
             MInput.Disabled = disabled;
         }
+    }
+
+    private static bool OnTextboxContinuePressed(On.Celeste.Textbox.orig_ContinuePressed orig, Textbox textbox) {
+        if (!textbox.Visible || !textbox.Opened ||
+            textbox.Scene is Level level && (level.FrozenOrPaused || level.RetryPlayerCorpse != null) ||
+            !ConsumePointerTap()) return orig(textbox);
+
+        // Use the normal dialogue confirmation, including its input lockouts.
+        // Consume one tap at this read so it cannot also dismiss the next page.
+        using (new ConfirmPulse()) return orig(textbox);
     }
 
     private static void OnAssistModeUpdate(On.Celeste.OuiAssistMode.orig_Update orig, OuiAssistMode menu) {
