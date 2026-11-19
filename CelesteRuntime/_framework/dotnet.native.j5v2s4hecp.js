@@ -1952,6 +1952,7 @@ var PThread = {
     worker.loaded = true;
     onFinishedLoading(worker);
    } else if (cmd === "celesteFrameConfirmed") {
+    Module.celesteCanvasResolution = { width: d.width, height: d.height };
     console.info(d["text"]);
    } else if (cmd === "alert") {
     alert(`Thread ${d["threadId"]}: ${d["text"]}`);
@@ -2785,6 +2786,15 @@ var findCanvasEventTarget = target => {
 var setCanvasElementSizeCallingThread = (target, width, height) => {
  var canvas = findCanvasEventTarget(target);
  if (!canvas) return -4;
+ var surface = canvas.offscreenCanvas || canvas;
+ var resolution = surface.GLctxObject?.GLctx.__celesteCanvasResolution || Module.celesteCanvasResolution;
+ // Android changes the browser viewport while backgrounding. Keep the proven
+ // game drawing buffer intact; the DOM canvas scales it to the visible bounds.
+ if (resolution?.width > 0 && resolution?.height > 0) {
+  width = resolution.width;
+  height = resolution.height;
+ }
+ if (width <= 0 || height <= 0) return 0;
  if (canvas.canvasSharedPtr) {
   GROWABLE_HEAP_I32()[((canvas.canvasSharedPtr) >>> 2) >>> 0] = width;
   GROWABLE_HEAP_I32()[(((canvas.canvasSharedPtr) + (4)) >>> 2) >>> 0] = height;
@@ -2796,8 +2806,8 @@ var setCanvasElementSizeCallingThread = (target, width, height) => {
    var prevViewport = canvas.GLctxObject.GLctx.getParameter(2978);
    autoResizeViewport = (prevViewport[0] === 0 && prevViewport[1] === 0 && prevViewport[2] === canvas.width && prevViewport[3] === canvas.height);
   }
-  canvas.width = width;
-  canvas.height = height;
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
   if (autoResizeViewport) {
    canvas.GLctxObject.GLctx.viewport(0, 0, width, height);
   }
@@ -2957,14 +2967,6 @@ function __wasmfs_copy_preloaded_file_data(index, buffer) {
 
 var wasmFS$backends = {};
 
-globalThis.__celesteRenderState = () => ({
- frames: Browser.mainLoop.currentFrameNumber, running: Browser.mainLoop.running,
- hasLoop: !!Browser.mainLoop.func, method: Browser.mainLoop.method,
- canvas: Module.canvas ? [Module.canvas.width, Module.canvas.height] : null,
- contexts: GL.contexts.filter(Boolean).map(c => ({handle:c.handle,
-  lost:c.GLctx.isContextLost(), size:[c.GLctx.canvas.width,c.GLctx.canvas.height],
-  viewport:Array.from(c.GLctx.getParameter(c.GLctx.VIEWPORT))}))
-});
 
 var wasmFS$JSMemoryFiles = {};
 
@@ -4589,8 +4591,9 @@ var celesteCheckDisplayFrame = () => {
     GLctx.readPixels(Math.floor(width * x / 4), Math.floor(height * y / 4), 1, 1, GLctx.RGBA, GLctx.UNSIGNED_BYTE, rgba);
     if (rgba[0] || rgba[1] || rgba[2]) {
      GLctx.__celesteFrameConfirmed = true;
+     GLctx.__celesteCanvasResolution = { width, height };
      var message = "[android-port] frame confirmed " + width + "x" + height + " pixel=" + Array.from(rgba).join(",");
-     if (ENVIRONMENT_IS_PTHREAD) postMessage({ cmd: "celesteFrameConfirmed", text: message });
+     if (ENVIRONMENT_IS_PTHREAD) postMessage({ cmd: "celesteFrameConfirmed", width, height, text: message });
      else console.info(message);
      return;
     }
@@ -7631,6 +7634,8 @@ var registerOrientationChangeEventCallback = (target, userData, useCapture, call
  targetThread = JSEvents.getTargetThreadForEventCallback(targetThread);
  if (!JSEvents.orientationChangeEvent) JSEvents.orientationChangeEvent = _malloc(8);
  var orientationChangeEventHandlerFunc = (e = event) => {
+  // Android's home-screen rotation must not resize the running SDL window.
+  if (Module.celesteCanvasResolution) return;
   var orientationChangeEvent = targetThread ? _malloc(8) : JSEvents.orientationChangeEvent;
   fillOrientationChangeEventData(orientationChangeEvent);
   if (targetThread) __emscripten_run_callback_on_thread(targetThread, callbackfunc, eventTypeId, orientationChangeEvent, userData); else if (getWasmTableEntry(callbackfunc)(eventTypeId, orientationChangeEvent, userData)) e.preventDefault();
@@ -7704,6 +7709,7 @@ var registerUiEventCallback = (target, userData, useCapture, callbackfunc, event
  if (!JSEvents.uiEvent) JSEvents.uiEvent = _malloc(36);
  target = findEventTarget(target);
  var uiEventHandlerFunc = (e = event) => {
+  if (eventTypeString === "resize" && Module.celesteCanvasResolution) return;
   if (e.target != target) {
    return;
   }
